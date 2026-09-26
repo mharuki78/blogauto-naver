@@ -1,5 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
+const { version } = require("../package.json");
 const { DEFAULT_SETTINGS } = require("../src/lib/settings");
 const { DEFAULT_ACCOUNT_STORE } = require("../src/lib/accountStore");
 
@@ -30,5 +32,11 @@ fs.copyFileSync(
   path.join(root, "EMPLOYEE_SETUP.md"),
   path.join(root, "dist", "EMPLOYEE_SETUP.md")
 );
+const executableName = `Bolg-Automator-Made-by-Hyunjin-${version}.exe`;
+const executablePath = path.join(root, "dist", executableName);
+if (fs.existsSync(executablePath)) {
+  const sha256 = crypto.createHash("sha256").update(fs.readFileSync(executablePath)).digest("hex");
+  fs.writeFileSync(path.join(root, "dist", "SHA256SUMS.txt"), `${sha256}  ${executableName}\n`, "utf8");
+}
 
 console.log("Prepared distributable runtime folders.");
