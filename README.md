@@ -1,5 +1,20 @@
 # Blogauto Naver + Tistory
 
+## 웹앱 (Vercel)
+
+웹 화면은 `npm run dev:web`으로 로컬에서 열고, `npm run build:web`으로 빌드합니다. 배포된 Vercel 프로젝트에는 다음 환경 변수가 필요합니다.
+
+- `APP_PASSWORD`: 웹 화면과 API에 적용되는 Basic 인증 암호 (사용자 이름: `blogauto`)
+- `BLOB_READ_WRITE_TOKEN`: 작업 초안 및 이력을 보관할 **private** Vercel Blob 스토어 토큰
+- `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`: 네이버 로그인과 발행에 사용하는 클라우드 브라우저
+- `AI_GATEWAY_API_KEY` 또는 Vercel 배포에서 자동 발급하는 OIDC: AI Gateway 글 생성
+
+웹 흐름은 주제 입력 → AI Gateway 초안 생성 → 초안 검토·수정 → Browserbase Live View에서 네이버 직접 로그인 → 네이버 발행입니다. 로그인 정보는 앱에 입력하거나 저장하지 않습니다. Browserbase Context가 네이버 로그인 세션을 저장합니다. 자동 발행은 버튼을 누른 경우에만 시작됩니다.
+
+현재 웹 버전은 **수동 주제 입력과 네이버 즉시 발행**을 지원합니다. 데스크톱 버전의 자동 주제 검색, 여러 에이전트 검토, 이미지 생성, 티스토리 발행, 예약·반복 발행, 다중 계정 관리는 아직 웹 버전에 포함되지 않았습니다. 참고 URL은 모델이 직접 읽지 않으므로 사실 확인은 발행 전에 사용자가 해야 합니다.
+
+Browserbase 무료 요금제는 세션 시간과 월 브라우저 사용량에 제한이 있습니다. Vercel AI Gateway의 프로젝트 예산은 소프트 한도이므로, 실제 청구액을 강제로 $10 아래로 고정하는 장치는 아닙니다. 운영 시 Vercel과 Browserbase의 사용량을 함께 확인하세요.
+
 > [!IMPORTANT]
 > **Naver 로그인 방식이 자동 로그인에서 수동 로그인으로 변경되었습니다.**
 >
