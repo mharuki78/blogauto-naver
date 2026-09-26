@@ -26,4 +26,9 @@ for (const runtimeRoot of targets) {
   }
 }
 
+fs.copyFileSync(
+  path.join(root, "EMPLOYEE_SETUP.md"),
+  path.join(root, "dist", "EMPLOYEE_SETUP.md")
+);
+
 console.log("Prepared distributable runtime folders.");

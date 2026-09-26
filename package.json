@@ -35,7 +35,8 @@
       "target": [
         "portable"
       ],
-    "artifactName": "Bolg-Automator-Made-by-Hyunjin-${version}.${ext}"
+      "signAndEditExecutable": false,
+      "artifactName": "Bolg-Automator-Made-by-Hyunjin-${version}.${ext}"
     }
   },
   "dependencies": {
