@@ -2,6 +2,8 @@
 
 ## 웹앱 (Vercel)
 
+배포 주소: https://blogauto-naver-himawari5.vercel.app (사용자 이름 `blogauto`, 배포 시 설정한 `APP_PASSWORD` 필요)
+
 웹 화면은 `npm run dev:web`으로 로컬에서 열고, `npm run build:web`으로 빌드합니다. 배포된 Vercel 프로젝트에는 다음 환경 변수가 필요합니다.
 
 - `APP_PASSWORD`: 웹 화면과 API에 적용되는 Basic 인증 암호 (사용자 이름: `blogauto`)
