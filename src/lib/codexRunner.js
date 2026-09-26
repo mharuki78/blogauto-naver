@@ -1346,6 +1346,7 @@ function buildImageWorkerPrompt({
   writerResult,
   finalTitle,
   accountImageStylePrompt = "",
+  referenceImagePath = "",
   imageRevisionFeedback = ""
 }) {
   const resultPath = path.join(jobDir, "image-worker-result.json");
@@ -1385,6 +1386,10 @@ function buildImageWorkerPrompt({
     "- Prefer concrete editorial blog visuals that summarize the article or nearby section. Avoid abstract decorative backgrounds.",
     accountImageStylePrompt ? "- Apply this account-specific visual style prompt unless it conflicts with factual accuracy, no-text rules, or the article context:" : "",
     accountImageStylePrompt ? accountImageStylePrompt : "",
+    referenceImagePath ? `- Uploaded visual reference image: ${referenceImagePath}` : "",
+    referenceImagePath ? "- Open and inspect this local image before generating. Pass its exact path as a reference-image input to every image generation call (referenced_image_paths when available). A text description alone does not count as using the reference image." : "",
+    referenceImagePath ? "- Use relevant composition, palette, texture, and subject cues from the reference while preserving each requested image's article context. Do not copy visible text, private people, or logos unless the article explicitly requires them." : "",
+    referenceImagePath ? "- If the image tool cannot accept the reference image, say so in notes. Do not claim the image was used directly." : "",
     "",
     "Title image policy:",
     includeTitleImage ? "- The title image is one information-rich Korean editorial card that compresses the whole article across sections, not a generic background, representative scene, product shot, or body-style illustration." : "- Title image generation is disabled.",
@@ -2182,10 +2187,14 @@ async function runCodexTask({
 
   const executeCodex = () => new Promise((resolve, reject) => {
     const codexModel = normalizeCodexModel(options.codexModel);
+    const attachedImagePath = agent === "imageStyle"
+      ? String(options.accountImageStyle?.sampleImagePath || "")
+      : (agent === "image" ? String(options.referenceImagePath || "") : "");
     const args = [
       "exec",
       "--json",
       "--skip-git-repo-check",
+      ...(attachedImagePath && fs.existsSync(attachedImagePath) ? ["--image", attachedImagePath] : []),
       ...(codexModel ? ["--model", codexModel] : []),
       "-c",
       `model_reasoning_effort=${taskEffort}`,
@@ -2528,11 +2537,17 @@ async function runCodexGeneration(options, log = () => {}) {
 
   const accountImageStyle = effectiveOptions.accountImageStyle || {};
   const sampleImagePath = String(accountImageStyle.sampleImagePath || "").trim();
-  let accountImageStylePrompt = sampleImagePath ? String(accountImageStyle.imageStylePrompt || "").trim() : "";
+  const referenceImagePath = sampleImagePath && fs.existsSync(sampleImagePath) ? sampleImagePath : "";
+  if (sampleImagePath && !referenceImagePath) {
+    log("업로드한 참조 이미지 파일을 찾지 못해 이미지 참조를 건너뜁니다.", "warn", "image");
+  } else if (referenceImagePath) {
+    log("업로드한 이미지를 Image Style Agent와 Image Worker의 시각 참조로 전달합니다.", "info", "image");
+  }
+  let accountImageStylePrompt = referenceImagePath ? String(accountImageStyle.imageStylePrompt || "").trim() : "";
   const sampleImageHash = String(accountImageStyle.sampleImageHash || "").trim();
   const sourceHash = String(accountImageStyle.imageStylePromptSourceImageHash || "").trim();
   const styleStatus = String(accountImageStyle.imageStylePromptStatus || "").trim();
-  const needsStylePrompt = sampleImagePath
+  const needsStylePrompt = referenceImagePath
     && (!accountImageStylePrompt || styleStatus === "missing" || styleStatus === "stale" || styleStatus === "failed" || (sourceHash && sampleImageHash && sourceHash !== sampleImageHash));
   if (needsStylePrompt) {
     log("Image Style Agent sample image analysis start", "info", "imageStyle");
@@ -2583,7 +2598,8 @@ async function runCodexGeneration(options, log = () => {}) {
   }
   effectiveOptions = {
     ...effectiveOptions,
-    accountImageStylePrompt
+    accountImageStylePrompt,
+    referenceImagePath
   };
 
   let researchResult = await runCodexTask({

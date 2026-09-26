@@ -706,6 +706,10 @@ textarea {
   background: #ffffff;
 }
 
+.image-reference {
+  margin-bottom: 12px;
+}
+
 .sample-image-preview {
   width: 132px;
   aspect-ratio: 16 / 10;

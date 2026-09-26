@@ -734,6 +734,7 @@ function renderAccounts() {
     empty.className = "empty";
     empty.textContent = "등록된 계정이 없습니다.";
     list.appendChild(empty);
+    renderAccountSampleImage(null);
     renderCategories();
     updateSessionNotice();
     return;
@@ -962,34 +963,40 @@ function fillAccountForm(account) {
 }
 
 function accountImageStatusLabel(account) {
-  if (!account?.sampleImagePath) return "Default image style";
+  if (!account) return "먼저 계정을 선택하세요.";
+  if (!account.sampleImagePath) return "이미지를 업로드하면 다음 생성 작업에서 직접 참조합니다.";
   const status = account.imageStylePromptStatus || (account.imageStylePrompt ? "ready" : "missing");
-  if (status === "ready") return "Custom style prompt ready";
-  if (status === "stale") return "Image changed - prompt will regenerate";
-  if (status === "failed") return `Prompt generation failed${account.imageStylePromptError ? `: ${account.imageStylePromptError}` : ""}`;
-  return "Prompt will be generated on next run";
+  if (status === "ready") return "원본 이미지를 직접 참조하고 스타일 설명도 사용합니다.";
+  if (status === "stale") return "변경한 이미지를 직접 참조합니다. 스타일 설명은 다음 작업에서 갱신됩니다.";
+  if (status === "failed") return "원본 이미지를 직접 참조합니다. 스타일 분석은 다시 시도합니다.";
+  return "원본 이미지를 직접 참조합니다. 스타일 설명은 다음 작업에서 생성됩니다.";
 }
 
 function renderAccountSampleImage(account = selectedAccount()) {
-  const preview = $("#accountSampleImagePreview");
-  const status = $("#accountImagePromptStatus");
-  const chooseButton = $("#chooseAccountSampleImageButton");
-  const deleteButton = $("#deleteAccountSampleImageButton");
-  if (!preview || !status) return;
-  preview.innerHTML = "";
-  if (account?.sampleImageUrl) {
-    const image = document.createElement("img");
-    image.src = account.sampleImageUrl;
-    image.alt = "Account sample image";
-    preview.appendChild(image);
-  } else {
-    const empty = document.createElement("span");
-    empty.textContent = "No sample image";
-    preview.appendChild(empty);
+  for (const [previewId, statusId, chooseId, deleteId] of [
+    ["#accountSampleImagePreview", "#accountImagePromptStatus", "#chooseAccountSampleImageButton", "#deleteAccountSampleImageButton"],
+    ["#referenceImagePreview", "#referenceImageStatus", "#chooseReferenceImageButton", "#deleteReferenceImageButton"]
+  ]) {
+    const preview = $(previewId);
+    const status = $(statusId);
+    if (!preview || !status) continue;
+    preview.innerHTML = "";
+    if (account?.sampleImageUrl) {
+      const image = document.createElement("img");
+      image.src = account.sampleImageUrl;
+      image.alt = "AI 이미지 생성에 사용할 참조 이미지";
+      preview.appendChild(image);
+    } else {
+      const empty = document.createElement("span");
+      empty.textContent = "참조 이미지 없음";
+      preview.appendChild(empty);
+    }
+    status.textContent = accountImageStatusLabel(account);
+    const chooseButton = $(chooseId);
+    const deleteButton = $(deleteId);
+    if (chooseButton) chooseButton.disabled = !account;
+    if (deleteButton) deleteButton.disabled = !account || !account.sampleImagePath;
   }
-  status.textContent = accountImageStatusLabel(account);
-  if (chooseButton) chooseButton.disabled = !account;
-  if (deleteButton) deleteButton.disabled = !account || !account.sampleImagePath;
 }
 
 function clearAccountForm() {
@@ -1808,27 +1815,39 @@ async function boot() {
     addLog({ level: "info", message: "신규 계정 입력을 시작합니다.", at: new Date().toISOString() });
   });
 
-  $("#chooseAccountSampleImageButton").addEventListener("click", async () => {
+  async function chooseReferenceImage() {
     const account = selectedAccount();
     if (!account) {
-      addLog({ level: "error", message: "Select an account before adding a sample image.", at: new Date().toISOString() });
+      addLog({ level: "error", message: "참조 이미지를 등록하려면 먼저 계정을 선택하세요.", at: new Date().toISOString() });
       return;
     }
-    state.accountStore = await window.blogAuto.chooseAccountSampleImage(account.id);
-    renderAccounts();
-    fillAccountForm(selectedAccount());
-    scheduleSettingsSave();
-  });
+    try {
+      state.accountStore = await window.blogAuto.chooseAccountSampleImage(account.id);
+      renderAccounts();
+      fillAccountForm(selectedAccount());
+      scheduleSettingsSave();
+    } catch (error) {
+      addLog({ level: "error", message: `참조 이미지 업로드 실패: ${error.message}`, at: new Date().toISOString() });
+    }
+  }
+  $("#chooseAccountSampleImageButton").addEventListener("click", chooseReferenceImage);
+  $("#chooseReferenceImageButton").addEventListener("click", chooseReferenceImage);
 
-  $("#deleteAccountSampleImageButton").addEventListener("click", async () => {
+  async function deleteReferenceImage() {
     const account = selectedAccount();
     if (!account || !account.sampleImagePath) return;
-    if (!window.confirm("Delete the sample image and custom image prompt?")) return;
-    state.accountStore = await window.blogAuto.deleteAccountSampleImage(account.id);
-    renderAccounts();
-    fillAccountForm(selectedAccount());
-    scheduleSettingsSave();
-  });
+    if (!window.confirm("선택 계정의 참조 이미지와 스타일 설명을 삭제할까요?")) return;
+    try {
+      state.accountStore = await window.blogAuto.deleteAccountSampleImage(account.id);
+      renderAccounts();
+      fillAccountForm(selectedAccount());
+      scheduleSettingsSave();
+    } catch (error) {
+      addLog({ level: "error", message: `참조 이미지 삭제 실패: ${error.message}`, at: new Date().toISOString() });
+    }
+  }
+  $("#deleteAccountSampleImageButton").addEventListener("click", deleteReferenceImage);
+  $("#deleteReferenceImageButton").addEventListener("click", deleteReferenceImage);
 
   $("#toggleAccountManagerButton").addEventListener("click", () => {
     state.accountManagerOpen = !state.accountManagerOpen;

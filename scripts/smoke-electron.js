@@ -46,6 +46,9 @@ const path = require("node:path");
       ["account sample preview", "#accountSampleImagePreview"],
       ["account sample choose", "#chooseAccountSampleImageButton"],
       ["account sample delete", "#deleteAccountSampleImageButton"],
+      ["reference image preview", "#referenceImagePreview"],
+      ["reference image upload", "#chooseReferenceImageButton"],
+      ["reference image delete", "#deleteReferenceImageButton"],
       ["topic", "#topic"],
       ["account list", "#accountList"],
       ["category list", "#categoryList"],
@@ -233,6 +236,9 @@ const path = require("node:path");
     const samplePreviewImages = await window.locator("#accountSampleImagePreview img").count();
     if (!samplePreviewImages) {
       throw new Error("Account sample image preview did not render.");
+    }
+    if (await window.locator("#referenceImagePreview img").count() !== 1) {
+      throw new Error("The uploaded image is not shown in the image-generation reference panel.");
     }
     await window.screenshot({ path: path.join(screenshotDir, "manual-login-account-ui.png") });
     console.log("Manual-login account UI captured.");

@@ -120,14 +120,14 @@
                 </label>
                 <div class="account-sample-image">
                   <div class="sample-image-preview" id="accountSampleImagePreview">
-                    <span>No sample image</span>
+                    <span>참조 이미지 없음</span>
                   </div>
                   <div class="sample-image-meta">
-                    <strong>Image style sample</strong>
-                    <small id="accountImagePromptStatus">Default image style</small>
+                    <strong>AI 이미지 참조</strong>
+                    <small id="accountImagePromptStatus">선택한 이미지를 생성에 직접 참조합니다.</small>
                     <div class="button-row">
-                      <button id="chooseAccountSampleImageButton" class="ghost" type="button">Upload / change</button>
-                      <button id="deleteAccountSampleImageButton" class="ghost danger-button" type="button">Delete</button>
+                      <button id="chooseAccountSampleImageButton" class="ghost" type="button">이미지 업로드 / 변경</button>
+                      <button id="deleteAccountSampleImageButton" class="ghost danger-button" type="button">삭제</button>
                     </div>
                   </div>
                 </div>
@@ -326,6 +326,17 @@
                   <option value="10" selected>섹션별 생성(최대 10장)</option>
                 </select>
               </label>
+            </div>
+          </div>
+          <div class="account-sample-image image-reference">
+            <div class="sample-image-preview" id="referenceImagePreview"><span>참조 이미지 없음</span></div>
+            <div class="sample-image-meta">
+              <strong>선택 계정의 AI 참조 이미지</strong>
+              <small id="referenceImageStatus">이미지를 업로드하면 다음 생성 작업의 타이틀·본문 이미지에 참조합니다.</small>
+              <div class="button-row">
+                <button id="chooseReferenceImageButton" class="ghost" type="button">참조 이미지 업로드</button>
+                <button id="deleteReferenceImageButton" class="ghost danger-button" type="button">삭제</button>
+              </div>
             </div>
           </div>
           <div id="imageGrid" class="image-grid">

@@ -1444,6 +1444,7 @@ async function isAiMarkToggleSelected(locator) {
     const parentClassName = String(element.closest?.(".se-set-ai-mark-button")?.className || "");
     return className.includes("se-is-selected")
       || parentClassName.includes("se-is-selected")
+      || element.checked === true
       || element.getAttribute("aria-pressed") === "true"
       || element.getAttribute("aria-checked") === "true";
   }).catch(() => false);
@@ -1495,6 +1496,8 @@ async function restoreEditorFocusAfterAiMark(page, imageLocator, toggleLocator) 
   return false;
 }
 
+const aiMarkUnavailablePages = new WeakSet();
+
 async function ensureAiMarkForImageComponent(page, imageComponent, log, label = "이미지") {
   try {
     if (!imageComponent) {
@@ -1510,12 +1513,34 @@ async function ensureAiMarkForImageComponent(page, imageComponent, log, label = 
     await imageLocator.hover({ timeout: 2000 }).catch(() => {});
     await sleep(350);
 
-    const aiMarkButton = imageComponent.locator(".se-set-ai-mark-button-toggle").first();
-    const toggleVisible = await aiMarkButton.waitFor({ state: "visible", timeout: 5000 })
+    let aiMarkButton = imageComponent.locator(".se-set-ai-mark-button-toggle").first();
+    let toggleVisible = await aiMarkButton.waitFor({ state: "visible", timeout: 1500 })
       .then(() => true)
       .catch(() => false);
     if (!toggleVisible) {
-      log(`${label}(${componentId || "unknown"}) 내부에서 AI 활용 설정 토글을 찾지 못했습니다.`, "warn");
+      await imageLocator.click({ timeout: 2000 }).catch(() => {});
+      await imageLocator.hover({ timeout: 2000 }).catch(() => {});
+      for (const selector of [
+        ".se-set-ai-mark-button-toggle",
+        ".se-set-ai-mark-button button",
+        ".se-set-ai-mark-button [role='switch']",
+        "button[aria-label*='AI 활용']",
+        "[role='switch'][aria-label*='AI 활용']",
+        "button:has-text('AI 활용')"
+      ]) {
+        const candidate = imageComponent.locator(`${selector}:visible`).first();
+        if (await candidate.waitFor({ state: "visible", timeout: 500 }).then(() => true).catch(() => false)) {
+          aiMarkButton = candidate;
+          toggleVisible = true;
+          break;
+        }
+      }
+    }
+    if (!toggleVisible) {
+      if (!aiMarkUnavailablePages.has(page)) {
+        log("현재 네이버 편집기에서 AI 활용 표시 버튼이 보이지 않습니다. 이미지는 삽입했으며, 발행 전 표시 상태를 확인해 주세요.", "info");
+        aiMarkUnavailablePages.add(page);
+      }
       return false;
     }
 
