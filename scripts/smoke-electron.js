@@ -35,7 +35,7 @@ const path = require("node:path");
     await window.waitForSelector("#jobForm", { timeout: 15000 });
 
     const checks = [
-      ["title", "Naver Blog Automator"],
+      ["title", "Bolg Automator - Made by Hyunjin"],
       ["blog id", "#blogId"],
       ["manual login guidance", ".account-login-guidance"],
       ["startup notice", "#startupNotice"],
@@ -237,6 +237,16 @@ const path = require("node:path");
     if (!samplePreviewImages) {
       throw new Error("Account sample image preview did not render.");
     }
+    const availableModelIds = await window.locator("#codexModel option").evaluateAll((options) => options.map((option) => option.value));
+    for (const id of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
+      if (!availableModelIds.includes(id)) throw new Error(`Latest Codex model is missing: ${id}`);
+    }
+    await window.locator("#codexModel").selectOption("gpt-6-sol");
+    await window.locator("#saveSettingsButton").click();
+    await window.waitForFunction(async () => {
+      const initial = await window.blogAuto.getInitialData();
+      return initial.settings?.codexModel === "gpt-6-sol";
+    });
     if (await window.locator("#referenceImagePreview img").count() !== 1) {
       throw new Error("The uploaded image is not shown in the image-generation reference panel.");
     }

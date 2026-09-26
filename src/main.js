@@ -12,6 +12,7 @@ const { normalizeAgentResult, getPreviewImages } = require("./lib/imageAssets");
 const { publishToNaver, checkNaverSession, verifyOpenNaverSession } = require("./lib/naverPublisher");
 const { publishToTistory, checkTistorySession } = require("./lib/tistoryPublisher");
 const { ensureSettingsFile, normalizeCodexModel, normalizeImageAspectRatio, normalizeMaxBodyImages, resolveCodexCmdPath, readSettings, writeSettings } = require("./lib/settings");
+const { getAvailableCodexModels } = require("./lib/codexModels");
 const {
   ensureAccountStoreFile,
   readAccountStore,
@@ -36,7 +37,7 @@ function createWindow() {
     minWidth: 980,
     minHeight: 720,
     backgroundColor: "#f4f7f5",
-    title: "Naver Blog Automator",
+    title: "Bolg Automator - Made by Hyunjin",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -1927,6 +1928,7 @@ app.whenReady().then(() => {
     return {
       runtimeRoot,
       codexCmdPath: resolveCodexCmdPath(settings.codexCmdPath),
+      codexModels: getAvailableCodexModels(),
       chrome: detectChromeInstall(),
       settings,
       accountStore: withAccountImageUrls(runtimeRoot, readAccountStore(runtimeRoot, settings)),

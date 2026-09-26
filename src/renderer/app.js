@@ -31,16 +31,7 @@ const DEFAULT_AGENT_MODELS = {
   writer: "high",
   image: "medium"
 };
-const CODEX_MODEL_IDS = new Set([
-  "",
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-5.6-luna",
-  "gpt-5.5",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.3-codex"
-]);
+const CODEX_MODEL_IDS = new Set([""]);
 const AGENT_MODEL_SELECTORS = {
   main: "#mainAgentModel",
   research: "#researchAgentModel",
@@ -61,6 +52,22 @@ function normalizeImageAspectRatio(value) {
 function normalizeCodexModel(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return CODEX_MODEL_IDS.has(normalized) ? normalized : "";
+}
+
+function populateCodexModels(models) {
+  const select = $("#codexModel");
+  if (!select) return;
+  select.replaceChildren();
+  CODEX_MODEL_IDS.clear();
+  CODEX_MODEL_IDS.add("");
+  select.add(new Option("Codex 기본값", ""));
+  for (const model of Array.isArray(models) ? models : []) {
+    const id = String(model?.id || "").trim().toLowerCase();
+    const label = String(model?.label || "").trim();
+    if (!/^[a-z0-9][a-z0-9.-]{0,79}$/.test(id) || !label || CODEX_MODEL_IDS.has(id)) continue;
+    CODEX_MODEL_IDS.add(id);
+    select.add(new Option(label, id));
+  }
 }
 
 function normalizeSearchProvider(value, fallback = "naver") {
@@ -1654,6 +1661,7 @@ async function startTistoryTestPublish() {
 
 async function boot() {
   const initial = await window.blogAuto.getInitialData();
+  populateCodexModels(initial.codexModels);
   $("#runtimePath").textContent = initial.runtimeRoot;
   state.chrome = initial.chrome || state.chrome;
   state.accountStore = initial.accountStore || state.accountStore;

@@ -17,7 +17,7 @@
   },
   "build": {
     "appId": "com.local.blogauto.naver",
-    "productName": "Naver Blog Automator",
+    "productName": "Bolg Automator - Made by Hyunjin",
     "directories": {
       "output": "dist"
     },
@@ -35,7 +35,7 @@
       "target": [
         "portable"
       ],
-      "artifactName": "Naver-Blog-Automator-${version}.${ext}"
+    "artifactName": "Bolg-Automator-Made-by-Hyunjin-${version}.${ext}"
     }
   },
   "dependencies": {
