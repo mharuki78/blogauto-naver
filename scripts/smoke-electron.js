@@ -71,7 +71,9 @@ const path = require("node:path");
       ["body image aspect ratio", "#bodyImageAspectRatio"],
       ["image grid", "#imageGrid"],
       ["history", "#historyBody"],
-      ["codex weekly usage badge", "#codexWeeklyLimitBadge"]
+      ["codex weekly usage badge", "#codexWeeklyLimitBadge"],
+      ["ChatGPT connection button", "#connectCodexButton"],
+      ["ChatGPT connection status", "#codexLoginStatus"]
     ];
 
     for (const [name, selectorOrText] of checks) {
@@ -87,6 +89,7 @@ const path = require("node:path");
         throw new Error(`Missing UI element: ${name}`);
       }
     }
+    await window.waitForFunction(() => document.querySelector("#codexLoginStatus")?.textContent !== "AI 계정 확인 중");
 
     if (await window.locator("#naverId, #naverPassword").count()) {
       throw new Error("Naver credential fields must not be present.");

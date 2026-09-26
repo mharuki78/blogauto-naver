@@ -82,6 +82,8 @@ npm run check
 npm run dist
 ```
 
+직원 배포용 포터블 EXE와 [설치 안내](EMPLOYEE_SETUP.md)는 `dist/`에 생성됩니다. 각 직원 PC에 Codex CLI를 설치한 뒤 앱 상단의 **ChatGPT 연결**에서 계정 소유자가 직접 로그인합니다. EXE에는 로그인 정보가 포함되지 않습니다.
+
 저장된 작업 실행:
 
 ```bash

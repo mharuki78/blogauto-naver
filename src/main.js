@@ -13,6 +13,7 @@ const { publishToNaver, checkNaverSession, verifyOpenNaverSession } = require(".
 const { publishToTistory, checkTistorySession } = require("./lib/tistoryPublisher");
 const { ensureSettingsFile, normalizeCodexModel, normalizeImageAspectRatio, normalizeMaxBodyImages, resolveCodexCmdPath, readSettings, writeSettings } = require("./lib/settings");
 const { getAvailableCodexModels } = require("./lib/codexModels");
+const { checkCodexLogin, startCodexLogin } = require("./lib/codexAuth");
 const {
   ensureAccountStoreFile,
   readAccountStore,
@@ -1996,6 +1997,18 @@ app.whenReady().then(() => {
     }
     return snapshot;
   });
+  ipcMain.handle("codex:loginStatus", () => {
+    const settings = readSettings(getRuntimeRoot());
+    return checkCodexLogin(resolveCodexCmdPath(settings.codexCmdPath));
+  });
+  ipcMain.handle("codex:startLogin", async () => {
+    const settings = readSettings(getRuntimeRoot());
+    const codexPath = resolveCodexCmdPath(settings.codexCmdPath);
+    const status = await checkCodexLogin(codexPath);
+    if (!status.available) throw new Error("Codex CLI를 먼저 설치해 주세요.");
+    return startCodexLogin(codexPath);
+  });
+  ipcMain.handle("codex:openInstallGuide", () => shell.openExternal("https://learn.chatgpt.com/docs/codex/cli"));
   ipcMain.handle("accounts:save", (_event, store) => {
     const runtimeRoot = getRuntimeRoot();
     const saved = writeAccountStore(runtimeRoot, store, readSettings(runtimeRoot));

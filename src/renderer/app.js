@@ -10,6 +10,7 @@ const state = {
   autoDelayWake: null,
   tokenTotal: 0,
   codexRateLimits: null,
+  codexLoginStatus: { available: false, loggedIn: false, mode: "none" },
   chrome: { available: true, path: "" },
   accountStore: { selectedAccountId: "", accounts: [] },
   tistorySessionStatus: "unknown",
@@ -980,6 +981,53 @@ function accountImageStatusLabel(account) {
   return `${count}장 참조 · 스타일 설명은 다음 작업에서 생성`;
 }
 
+function showCodexLoginStatus(status) {
+  state.codexLoginStatus = status;
+  const badge = $("#codexLoginStatus");
+  const button = $("#connectCodexButton");
+  if (!badge || !button) return;
+  badge.className = status.mode === "chatgpt" ? "badge success" : status.loggedIn ? "badge warning" : "badge info";
+  badge.textContent = status.mode === "chatgpt"
+    ? "ChatGPT 연결됨"
+    : status.loggedIn ? "다른 AI 인증 사용 중" : status.available ? "ChatGPT 미연결" : "Codex 설치 필요";
+  button.textContent = status.available
+    ? (status.mode === "chatgpt" ? "계정 다시 연결" : "ChatGPT 연결")
+    : "Codex 설치 안내";
+}
+
+async function refreshCodexLoginStatus() {
+  const status = await window.blogAuto.getCodexLoginStatus();
+  showCodexLoginStatus(status);
+  return status;
+}
+
+async function connectCodexAccount() {
+  if (!state.codexLoginStatus.available) {
+    await window.blogAuto.openCodexInstallGuide();
+    return;
+  }
+  if (!window.confirm("이 Windows 사용자에게 ChatGPT 로그인 권한이 저장됩니다. 계정 소유자가 직접 로그인하시겠습니까?")) return;
+  const button = $("#connectCodexButton");
+  const badge = $("#codexLoginStatus");
+  button.disabled = true;
+  badge.className = "badge info";
+  badge.textContent = "브라우저 로그인 대기 중";
+  try {
+    await window.blogAuto.startCodexLogin();
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const status = await refreshCodexLoginStatus();
+      if (status.mode === "chatgpt") return;
+    }
+    addLog({ level: "warn", message: "ChatGPT 로그인 상태를 확인하지 못했습니다. 계정 로그인 완료 후 다시 시도해 주세요.", at: new Date().toISOString() });
+  } catch (error) {
+    addLog({ level: "error", message: `ChatGPT 연결 실패: ${error.message}`, at: new Date().toISOString() });
+  } finally {
+    button.disabled = false;
+    await refreshCodexLoginStatus().catch(() => {});
+  }
+}
+
 function renderAccountSampleImage(account = selectedAccount()) {
   for (const [previewId, statusId, chooseId, deleteId] of [
     ["#accountSampleImagePreview", "#accountImagePromptStatus", "#chooseAccountSampleImageButton", "#deleteAccountSampleImageButton"],
@@ -1700,6 +1748,7 @@ async function boot() {
   state.accountStore = initial.accountStore || state.accountStore;
   applySettings(initial.settings || {});
   setCodexRateLimits(initial.settings?.codexRateLimits || null);
+  refreshCodexLoginStatus().catch(() => showCodexLoginStatus({ available: false, loggedIn: false, mode: "none" }));
   refreshCodexUsageOnStartup();
   showStartupNoticeIfNeeded();
   renderAccounts();
@@ -2017,6 +2066,7 @@ async function boot() {
   $("#openRuntimeButton").addEventListener("click", () => {
     window.blogAuto.openRuntimeFolder();
   });
+  $("#connectCodexButton").addEventListener("click", connectCodexAccount);
   $("#dismissSessionNoticeButton").addEventListener("click", () => {
     $("#sessionNotice").hidden = true;
   });
