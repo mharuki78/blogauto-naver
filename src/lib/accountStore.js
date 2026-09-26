@@ -57,6 +57,30 @@ function normalizeCategory(category) {
   };
 }
 
+function normalizeReferenceImages(account) {
+  const rawImages = Array.isArray(account?.referenceImages)
+    ? account.referenceImages
+    : (account?.sampleImagePath ? [{
+      id: "legacy-sample",
+      path: account.sampleImagePath,
+      hash: account.sampleImageHash,
+      name: path.basename(String(account.sampleImagePath)),
+      updatedAt: account.sampleImageUpdatedAt
+    }] : []);
+  const seen = new Set();
+  return rawImages.map((image, index) => ({
+    id: String(image?.id || `reference-${index + 1}`).trim(),
+    path: String(image?.path || "").trim(),
+    hash: String(image?.hash || "").trim(),
+    name: String(image?.name || path.basename(String(image?.path || ""))).trim(),
+    updatedAt: String(image?.updatedAt || "")
+  })).filter((image) => {
+    if (!image.id || !image.path || seen.has(image.id)) return false;
+    seen.add(image.id);
+    return true;
+  });
+}
+
 function normalizeAccount(account) {
   // Existing profile folders were named with naverId. Keep this legacy key only
   // so upgrades reuse the same browser profile; it is never used to fill login forms.
@@ -66,15 +90,18 @@ function normalizeAccount(account) {
   const categories = (Array.isArray(account?.categories) ? account.categories : [])
     .map(normalizeCategory)
     .filter((category) => category.name);
+  const referenceImages = normalizeReferenceImages(account);
+  const firstReference = referenceImages[0];
 
   return {
     id,
     label: String(account?.label || blogId || naverId || "Naver 계정").trim(),
     naverId,
     blogId,
-    sampleImagePath: String(account?.sampleImagePath || ""),
-    sampleImageHash: String(account?.sampleImageHash || ""),
-    sampleImageUpdatedAt: String(account?.sampleImageUpdatedAt || ""),
+    referenceImages,
+    sampleImagePath: firstReference?.path || "",
+    sampleImageHash: firstReference?.hash || "",
+    sampleImageUpdatedAt: firstReference?.updatedAt || "",
     imageStylePrompt: String(account?.imageStylePrompt || ""),
     imageStylePromptUpdatedAt: String(account?.imageStylePromptUpdatedAt || ""),
     imageStylePromptStatus: ["missing", "ready", "stale", "failed"].includes(account?.imageStylePromptStatus)
@@ -200,5 +227,6 @@ module.exports = {
   writeAccountStore,
   updateAccountSession,
   getAccountProfileDir,
-  getAccountStorePath
+  getAccountStorePath,
+  normalizeReferenceImages
 };

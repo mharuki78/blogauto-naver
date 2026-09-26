@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld("blogAuto", {
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   saveAccountStore: (store) => ipcRenderer.invoke("accounts:save", store),
   chooseAccountSampleImage: (accountId) => ipcRenderer.invoke("accounts:chooseSampleImage", accountId),
-  deleteAccountSampleImage: (accountId) => ipcRenderer.invoke("accounts:deleteSampleImage", accountId),
+  deleteAccountSampleImage: (accountId, referenceId) => ipcRenderer.invoke("accounts:deleteSampleImage", accountId, referenceId),
   checkAccountSession: (accountId, options) => ipcRenderer.invoke("accounts:checkSession", accountId, options),
   checkTistorySession: (tistoryBlogId) => ipcRenderer.invoke("tistory:checkSession", tistoryBlogId),
   testTistoryPublish: (form) => ipcRenderer.invoke("tistory:testPublish", form),

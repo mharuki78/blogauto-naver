@@ -9,6 +9,8 @@ const path = require("node:path");
   const userDataDir = path.join(smokeRuntimeRoot, "browser-profile");
   const smokeAssetDir = path.join(smokeRuntimeRoot, "account-assets", "acct_smoke_delete");
   const smokeSampleImagePath = path.join(smokeAssetDir, "sample.png");
+  const uploadOnePath = path.join(smokeRuntimeRoot, "upload-one.png");
+  const uploadTwoPath = path.join(smokeRuntimeRoot, "upload-two.png");
   fs.rmSync(smokeRuntimeRoot, { recursive: true, force: true });
   fs.rmSync(screenshotDir, { recursive: true, force: true });
   fs.mkdirSync(smokeRuntimeRoot, { recursive: true });
@@ -191,6 +193,8 @@ const path = require("node:path");
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
       "base64"
     ));
+    fs.writeFileSync(uploadOnePath, Buffer.concat([fs.readFileSync(smokeSampleImagePath), Buffer.from([1])]));
+    fs.writeFileSync(uploadTwoPath, Buffer.concat([fs.readFileSync(smokeSampleImagePath), Buffer.from([2])]));
     await window.evaluate(async ({ sampleImagePath }) => {
       await window.blogAuto.saveAccountStore({
         selectedAccountId: "acct_smoke_delete",
@@ -252,6 +256,24 @@ const path = require("node:path");
     }
     await window.screenshot({ path: path.join(screenshotDir, "manual-login-account-ui.png") });
     console.log("Manual-login account UI captured.");
+    await app.evaluate(({ dialog }, filePaths) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths });
+    }, [uploadOnePath, uploadTwoPath]);
+    await window.locator("#chooseReferenceImageButton").click();
+    await window.waitForFunction(() => document.querySelectorAll("#referenceImagePreview .reference-image-card").length === 3);
+    await window.waitForFunction(() => [...document.querySelectorAll("#referenceImagePreview .reference-image-card img")]
+      .every((image) => image.complete && image.naturalWidth > 0));
+    const uploaded = await window.evaluate(async () => (await window.blogAuto.getInitialData()).accountStore.accounts[0].referenceImages);
+    if (uploaded.length !== 3 || uploaded.some((image) => !fs.existsSync(image.path))) {
+      throw new Error("Multi-file upload did not persist all reference images.");
+    }
+    await window.screenshot({ path: path.join(screenshotDir, "multi-reference-ui.png") });
+    window.on("dialog", (dialog) => dialog.accept());
+    await window.locator("#referenceImagePreview .reference-image-card button").first().click();
+    await window.waitForFunction(() => document.querySelectorAll("#referenceImagePreview .reference-image-card").length === 2);
+    await window.locator("#deleteReferenceImageButton").click();
+    await window.waitForFunction(() => document.querySelectorAll("#referenceImagePreview .reference-image-card").length === 0);
+    console.log("Multi-reference upload and deletion passed.");
     await window.locator(".category-row").filter({ hasText: "Smoke Category" }).locator("[data-action='edit']").click();
     const categoryEditSnapshot = await window.evaluate(() => ({
       name: document.querySelector("#categoryName")?.value || "",
@@ -360,7 +382,6 @@ const path = require("node:path");
         .some((row) => row.textContent.includes("Smoke Edited Account"))
     ));
     console.log("Account update flow passed.");
-    window.on("dialog", (dialog) => dialog.accept());
     await window.locator(".account-row").filter({ hasText: "Smoke Edited Account" }).locator("[data-action='delete']").click();
     await window.waitForFunction(() => (
       [...document.querySelectorAll(".account-row")]

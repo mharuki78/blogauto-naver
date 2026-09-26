@@ -1290,16 +1290,16 @@ function buildWriterContractRefinementPrompt({
 
 function buildImageStylePrompt({
   jobDir,
-  sampleImagePath,
-  sampleImageHash = ""
+  referenceImagePaths = [],
+  referenceImageHash = ""
 }) {
   const resultPath = path.join(jobDir, "image-style-result.json");
   return [
     "You are the Image Style Agent for a Korean Naver Blog automation app.",
-    "Analyze the local sample image and write a reusable image style prompt.",
+    "Analyze every uploaded reference image and write one reusable image style prompt that combines their shared visual direction.",
     "Do not generate images. Do not write article content.",
-    `Sample image path: ${sampleImagePath}`,
-    `Sample image hash: ${sampleImageHash || "(unknown)"}`,
+    `Reference image paths: ${JSON.stringify(referenceImagePaths)}`,
+    `Reference image set hash: ${referenceImageHash || "(unknown)"}`,
     `Output JSON path: ${resultPath}`,
     "",
     "Progress logging:",
@@ -1309,8 +1309,8 @@ function buildImageStylePrompt({
     "Style prompt requirements:",
     "- Describe visual style only: composition, layout, palette, lighting, texture, camera/framing, graphic treatment, typography style if visible, and overall mood.",
     "- Make it reusable for future Korean Naver Blog title thumbnails and body support images.",
-    "- Do not identify private people, infer sensitive traits, or copy exact text from the sample image.",
-    "- Do not include article-specific facts, dates, products, programs, or claims from the sample image.",
+    "- Do not identify private people, infer sensitive traits, or copy exact text from the reference images.",
+    "- Do not include article-specific facts, dates, products, programs, or claims from the reference images.",
     "- Keep the prompt concrete enough for image generation and under 1200 Korean/English characters.",
     "",
     "Required output:",
@@ -1332,7 +1332,7 @@ function buildImageWorkerPrompt({
   writerResult,
   finalTitle,
   accountImageStylePrompt = "",
-  referenceImagePath = "",
+  referenceImagePaths = [],
   imageRevisionFeedback = ""
 }) {
   const resultPath = path.join(jobDir, "image-worker-result.json");
@@ -1372,10 +1372,10 @@ function buildImageWorkerPrompt({
     "- Prefer concrete editorial blog visuals that summarize the article or nearby section. Avoid abstract decorative backgrounds.",
     accountImageStylePrompt ? "- Apply this account-specific visual style prompt unless it conflicts with factual accuracy, no-text rules, or the article context:" : "",
     accountImageStylePrompt ? accountImageStylePrompt : "",
-    referenceImagePath ? `- Uploaded visual reference image: ${referenceImagePath}` : "",
-    referenceImagePath ? "- Open and inspect this local image before generating. Pass its exact path as a reference-image input to every image generation call (referenced_image_paths when available). A text description alone does not count as using the reference image." : "",
-    referenceImagePath ? "- Use relevant composition, palette, texture, and subject cues from the reference while preserving each requested image's article context. Do not copy visible text, private people, or logos unless the article explicitly requires them." : "",
-    referenceImagePath ? "- If the image tool cannot accept the reference image, say so in notes. Do not claim the image was used directly." : "",
+    referenceImagePaths.length ? `- Uploaded visual reference images: ${JSON.stringify(referenceImagePaths)}` : "",
+    referenceImagePaths.length ? "- Open and inspect every listed local image before generating. Pass all exact paths as reference-image inputs to every image generation call (referenced_image_paths when available). A text description alone does not count as using the reference images." : "",
+    referenceImagePaths.length ? "- Combine relevant composition, palette, texture, and subject cues from the references while preserving each requested image's article context. Do not copy visible text, private people, or logos unless the article explicitly requires them." : "",
+    referenceImagePaths.length ? "- If the image tool cannot accept multiple reference images, say so in notes. Do not claim all references were used directly." : "",
     "",
     "Title image policy:",
     includeTitleImage ? "- The title image is one information-rich Korean editorial card that compresses the whole article across sections, not a generic background, representative scene, product shot, or body-style illustration." : "- Title image generation is disabled.",
@@ -2173,14 +2173,14 @@ async function runCodexTask({
 
   const executeCodex = () => new Promise((resolve, reject) => {
     const codexModel = normalizeCodexModel(options.codexModel);
-    const attachedImagePath = agent === "imageStyle"
-      ? String(options.accountImageStyle?.sampleImagePath || "")
-      : (agent === "image" ? String(options.referenceImagePath || "") : "");
+    const attachedImagePaths = ["imageStyle", "image"].includes(agent)
+      ? (Array.isArray(options.referenceImagePaths) ? options.referenceImagePaths : []).filter((filePath) => fs.existsSync(filePath))
+      : [];
     const args = [
       "exec",
       "--json",
       "--skip-git-repo-check",
-      ...(attachedImagePath && fs.existsSync(attachedImagePath) ? ["--image", attachedImagePath] : []),
+      ...(attachedImagePaths.length ? ["--image", ...attachedImagePaths] : []),
       ...(codexModel ? ["--model", codexModel] : []),
       "-c",
       `model_reasoning_effort=${taskEffort}`,
@@ -2522,27 +2522,32 @@ async function runCodexGeneration(options, log = () => {}) {
   };
 
   const accountImageStyle = effectiveOptions.accountImageStyle || {};
-  const sampleImagePath = String(accountImageStyle.sampleImagePath || "").trim();
-  const referenceImagePath = sampleImagePath && fs.existsSync(sampleImagePath) ? sampleImagePath : "";
-  if (sampleImagePath && !referenceImagePath) {
-    log("업로드한 참조 이미지 파일을 찾지 못해 이미지 참조를 건너뜁니다.", "warn", "image");
-  } else if (referenceImagePath) {
-    log("업로드한 이미지를 Image Style Agent와 Image Worker의 시각 참조로 전달합니다.", "info", "image");
+  const suppliedReferences = Array.isArray(accountImageStyle.referenceImages)
+    ? accountImageStyle.referenceImages
+    : (accountImageStyle.sampleImagePath ? [{ path: accountImageStyle.sampleImagePath, hash: accountImageStyle.sampleImageHash }] : []);
+  const usableReferences = suppliedReferences.filter((image) => image?.path && fs.existsSync(image.path));
+  const referenceImagePaths = usableReferences.map((image) => String(image.path));
+  const referenceImageHash = usableReferences.map((image) => String(image.hash || fs.statSync(image.path).mtimeMs)).join(":");
+  if (usableReferences.length < suppliedReferences.length) {
+    log(`참조 이미지 ${suppliedReferences.length - usableReferences.length}개를 찾지 못해 해당 파일을 건너뜁니다.`, "warn", "image");
   }
-  let accountImageStylePrompt = referenceImagePath ? String(accountImageStyle.imageStylePrompt || "").trim() : "";
-  const sampleImageHash = String(accountImageStyle.sampleImageHash || "").trim();
+  if (referenceImagePaths.length) {
+    log(`참조 이미지 ${referenceImagePaths.length}개를 Image Style Agent와 Image Worker에 전달합니다.`, "info", "image");
+  }
+  effectiveOptions = { ...effectiveOptions, referenceImagePaths };
+  let accountImageStylePrompt = referenceImagePaths.length ? String(accountImageStyle.imageStylePrompt || "").trim() : "";
   const sourceHash = String(accountImageStyle.imageStylePromptSourceImageHash || "").trim();
   const styleStatus = String(accountImageStyle.imageStylePromptStatus || "").trim();
-  const needsStylePrompt = referenceImagePath
-    && (!accountImageStylePrompt || styleStatus === "missing" || styleStatus === "stale" || styleStatus === "failed" || (sourceHash && sampleImageHash && sourceHash !== sampleImageHash));
+  const needsStylePrompt = referenceImagePaths.length
+    && (!accountImageStylePrompt || styleStatus === "missing" || styleStatus === "stale" || styleStatus === "failed" || sourceHash !== referenceImageHash);
   if (needsStylePrompt) {
-    log("Image Style Agent sample image analysis start", "info", "imageStyle");
+    log("Image Style Agent 참조 이미지 분석 시작", "info", "imageStyle");
     const styleResult = await runCodexTask({
       options: effectiveOptions,
       prompt: buildImageStylePrompt({
         jobDir: effectiveOptions.jobDir,
-        sampleImagePath,
-        sampleImageHash
+        referenceImagePaths,
+        referenceImageHash
       }),
       promptFileName: "image-style-prompt.txt",
       resultFileName: "image-style-result.json",
@@ -2560,12 +2565,12 @@ async function runCodexGeneration(options, log = () => {}) {
     const generatedStylePrompt = String(styleResult.imageStylePrompt || "").trim();
     if (String(styleResult.status || "").toLowerCase() === "success" && generatedStylePrompt) {
       accountImageStylePrompt = generatedStylePrompt;
-      log("Image Style Agent sample image analysis complete", "info", "imageStyle");
+      log("Image Style Agent 참조 이미지 분석 완료", "info", "imageStyle");
       if (typeof options.onAccountImageStylePrompt === "function") {
         options.onAccountImageStylePrompt({
           status: "success",
           imageStylePrompt: accountImageStylePrompt,
-          sampleImageHash
+          referenceImageHash
         });
       }
     } else {
@@ -2576,7 +2581,7 @@ async function runCodexGeneration(options, log = () => {}) {
         options.onAccountImageStylePrompt({
           status: "failed",
           imageStylePrompt: "",
-          sampleImageHash,
+          referenceImageHash,
           failureReason
         });
       }
@@ -2584,8 +2589,7 @@ async function runCodexGeneration(options, log = () => {}) {
   }
   effectiveOptions = {
     ...effectiveOptions,
-    accountImageStylePrompt,
-    referenceImagePath
+    accountImageStylePrompt
   };
 
   let researchResult = await runCodexTask({

@@ -697,7 +697,7 @@ textarea {
 .account-sample-image {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   border: 1px solid var(--border);
@@ -710,25 +710,44 @@ textarea {
   margin-bottom: 12px;
 }
 
-.sample-image-preview {
-  width: 132px;
-  aspect-ratio: 16 / 10;
+.reference-image-list {
+  min-height: 96px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface-muted);
-  display: grid;
-  place-items: center;
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 6px;
   color: var(--muted);
   font-size: 11px;
-  text-align: center;
 }
 
-.sample-image-preview img {
+.reference-image-card {
+  flex: 0 0 104px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.reference-image-card img {
   width: 100%;
-  height: 100%;
+  aspect-ratio: 16 / 10;
   object-fit: cover;
+  border-radius: 4px;
   display: block;
+}
+
+.reference-image-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-image-card button {
+  padding: 3px 6px;
+  font-size: 11px;
 }
 
 .sample-image-meta {

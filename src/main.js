@@ -115,21 +115,21 @@ function accountAssetDir(runtimeRoot, accountId) {
   return path.join(runtimeRoot, "account-assets", String(accountId || "unknown"));
 }
 
-function accountSampleImagePath(runtimeRoot, accountId, sourcePath) {
+function accountReferenceImagePath(runtimeRoot, accountId, referenceId, sourcePath) {
   const ext = path.extname(String(sourcePath || "")).toLowerCase();
   const safeExt = [".png", ".jpg", ".jpeg", ".webp"].includes(ext) ? ext : ".png";
-  return path.join(accountAssetDir(runtimeRoot, accountId), `sample${safeExt}`);
+  return path.join(accountAssetDir(runtimeRoot, accountId), `reference-${referenceId}${safeExt}`);
 }
 
 function withAccountImageUrls(runtimeRoot, store) {
   return {
     ...store,
     accounts: (store.accounts || []).map((account) => {
-      const sampleImagePath = String(account.sampleImagePath || "");
-      const sampleImageUrl = sampleImagePath && fs.existsSync(sampleImagePath)
-        ? pathToFileURL(sampleImagePath).toString()
-        : "";
-      return { ...account, sampleImageUrl };
+      const referenceImages = (account.referenceImages || []).map((image) => ({
+        ...image,
+        url: image.path && fs.existsSync(image.path) ? pathToFileURL(image.path).toString() : ""
+      }));
+      return { ...account, referenceImages, sampleImageUrl: referenceImages[0]?.url || "" };
     })
   };
 }
@@ -1396,6 +1396,7 @@ async function startJob(form) {
         historyTitles: titleHistory.map((item) => item.title),
         accountImageStyle: {
           accountId: account.id || "",
+          referenceImages: account.referenceImages || [],
           sampleImagePath: account.sampleImagePath || "",
           sampleImageHash: account.sampleImageHash || "",
           imageStylePrompt: account.imageStylePrompt || "",
@@ -1409,7 +1410,7 @@ async function startJob(form) {
           target.imageStylePrompt = String(styleResult.imageStylePrompt || "");
           target.imageStylePromptUpdatedAt = new Date().toISOString();
           target.imageStylePromptStatus = styleResult.status === "success" ? "ready" : "failed";
-          target.imageStylePromptSourceImageHash = String(styleResult.sampleImageHash || target.sampleImageHash || "");
+          target.imageStylePromptSourceImageHash = String(styleResult.referenceImageHash || target.sampleImageHash || "");
           target.imageStylePromptError = String(styleResult.failureReason || "");
           const saved = writeAccountStore(runtimeRoot, store, readSettings(runtimeRoot));
           emit("accounts:update", withAccountImageUrls(runtimeRoot, saved));
@@ -2003,59 +2004,87 @@ app.whenReady().then(() => {
     return publicStore;
   });
   ipcMain.handle("accounts:chooseSampleImage", async (_event, accountId) => {
+    if (activeJob) throw new Error("작업 실행 중에는 참조 이미지를 변경할 수 없습니다.");
     const runtimeRoot = getRuntimeRoot();
     const settings = readSettings(runtimeRoot);
     const store = readAccountStore(runtimeRoot, settings);
     const account = store.accounts.find((item) => item.id === accountId);
-    if (!account) throw new Error("Account not found.");
+    if (!account) throw new Error("계정을 찾을 수 없습니다.");
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: "Choose sample image",
-      properties: ["openFile"],
+      title: "AI 참조 이미지 추가 (최대 10장)",
+      properties: ["openFile", "multiSelections"],
       filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }]
     });
-    if (result.canceled || !result.filePaths?.[0]) {
+    if (result.canceled || !result.filePaths?.length) {
       return withAccountImageUrls(runtimeRoot, store);
     }
-    const sourcePath = result.filePaths[0];
+    const existing = account.referenceImages || [];
+    const knownHashes = new Set(existing.map((image) => image.hash).filter(Boolean));
+    const candidates = [];
+    for (const sourcePath of result.filePaths) {
+      const ext = path.extname(sourcePath).toLowerCase();
+      if (![".png", ".jpg", ".jpeg", ".webp"].includes(ext)) throw new Error("PNG, JPG, JPEG, WebP 이미지만 업로드할 수 있습니다.");
+      const stat = fs.statSync(sourcePath);
+      if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw new Error("참조 이미지는 파일당 20MB 이하여야 합니다.");
+      const hash = fileHash(sourcePath);
+      if (knownHashes.has(hash)) continue;
+      knownHashes.add(hash);
+      candidates.push({ sourcePath, hash, name: path.basename(sourcePath) });
+    }
+    if (existing.length + candidates.length > 10) throw new Error("참조 이미지는 계정당 최대 10장까지 추가할 수 있습니다.");
+    if (!candidates.length) return withAccountImageUrls(runtimeRoot, store);
     const destDir = accountAssetDir(runtimeRoot, account.id);
     fs.mkdirSync(destDir, { recursive: true });
-    const destPath = accountSampleImagePath(runtimeRoot, account.id, sourcePath);
-    fs.copyFileSync(sourcePath, destPath);
-    const nextHash = fileHash(destPath);
-    const changed = nextHash !== account.sampleImageHash;
-    account.sampleImagePath = destPath;
-    account.sampleImageHash = nextHash;
-    account.sampleImageUpdatedAt = new Date().toISOString();
-    if (changed) {
+    const added = [];
+    let saved;
+    try {
+      for (const candidate of candidates) {
+        const id = crypto.randomUUID();
+        const destPath = accountReferenceImagePath(runtimeRoot, account.id, id, candidate.sourcePath);
+        fs.copyFileSync(candidate.sourcePath, destPath);
+        added.push({ id, path: destPath, hash: candidate.hash, name: candidate.name, updatedAt: new Date().toISOString() });
+      }
+      account.referenceImages = [...existing, ...added];
       account.imageStylePromptStatus = account.imageStylePrompt ? "stale" : "missing";
       account.imageStylePromptError = "";
+      saved = writeAccountStore(runtimeRoot, store, settings);
+    } catch (error) {
+      for (const image of added) fs.rmSync(image.path, { force: true });
+      throw error;
     }
-    const saved = writeAccountStore(runtimeRoot, store, settings);
     const publicStore = withAccountImageUrls(runtimeRoot, saved);
     emit("accounts:update", publicStore);
     return publicStore;
   });
-  ipcMain.handle("accounts:deleteSampleImage", (_event, accountId) => {
+  ipcMain.handle("accounts:deleteSampleImage", (_event, accountId, referenceId = "") => {
+    if (activeJob) throw new Error("작업 실행 중에는 참조 이미지를 변경할 수 없습니다.");
     const runtimeRoot = getRuntimeRoot();
     const settings = readSettings(runtimeRoot);
     const store = readAccountStore(runtimeRoot, settings);
     const account = store.accounts.find((item) => item.id === accountId);
-    if (!account) throw new Error("Account not found.");
-    const samplePath = String(account.sampleImagePath || "");
-    const assetRoot = path.resolve(accountAssetDir(runtimeRoot, account.id));
-    const resolvedSample = samplePath ? path.resolve(samplePath) : "";
-    if (resolvedSample && resolvedSample.startsWith(assetRoot) && fs.existsSync(resolvedSample)) {
-      fs.rmSync(resolvedSample, { force: true });
+    if (!account) throw new Error("계정을 찾을 수 없습니다.");
+    const images = account.referenceImages || [];
+    const removed = referenceId ? images.filter((image) => image.id === referenceId) : images;
+    if (referenceId && !removed.length) throw new Error("삭제할 참조 이미지를 찾지 못했습니다.");
+    account.referenceImages = referenceId ? images.filter((image) => image.id !== referenceId) : [];
+    if (account.referenceImages.length) {
+      account.imageStylePromptStatus = account.imageStylePrompt ? "stale" : "missing";
+    } else {
+      account.imageStylePrompt = "";
+      account.imageStylePromptUpdatedAt = "";
+      account.imageStylePromptStatus = "missing";
+      account.imageStylePromptSourceImageHash = "";
     }
-    account.sampleImagePath = "";
-    account.sampleImageHash = "";
-    account.sampleImageUpdatedAt = "";
-    account.imageStylePrompt = "";
-    account.imageStylePromptUpdatedAt = "";
-    account.imageStylePromptStatus = "missing";
-    account.imageStylePromptSourceImageHash = "";
     account.imageStylePromptError = "";
     const saved = writeAccountStore(runtimeRoot, store, settings);
+    const assetRoot = path.resolve(accountAssetDir(runtimeRoot, account.id));
+    for (const image of removed) {
+      const imagePath = path.resolve(String(image.path || ""));
+      const relative = path.relative(assetRoot, imagePath);
+      if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
+        fs.rmSync(imagePath, { force: true });
+      }
+    }
     const publicStore = withAccountImageUrls(runtimeRoot, saved);
     emit("accounts:update", publicStore);
     return publicStore;

@@ -971,12 +971,13 @@ function fillAccountForm(account) {
 
 function accountImageStatusLabel(account) {
   if (!account) return "먼저 계정을 선택하세요.";
-  if (!account.sampleImagePath) return "이미지를 업로드하면 다음 생성 작업에서 직접 참조합니다.";
+  const count = account.referenceImages?.length || 0;
+  if (!count) return "이미지를 여러 장 추가하면 다음 생성 작업에서 함께 참조합니다.";
   const status = account.imageStylePromptStatus || (account.imageStylePrompt ? "ready" : "missing");
-  if (status === "ready") return "원본 이미지를 직접 참조하고 스타일 설명도 사용합니다.";
-  if (status === "stale") return "변경한 이미지를 직접 참조합니다. 스타일 설명은 다음 작업에서 갱신됩니다.";
-  if (status === "failed") return "원본 이미지를 직접 참조합니다. 스타일 분석은 다시 시도합니다.";
-  return "원본 이미지를 직접 참조합니다. 스타일 설명은 다음 작업에서 생성됩니다.";
+  if (status === "ready") return `${count}장 참조 · 스타일 설명 준비됨`;
+  if (status === "stale") return `${count}장 참조 · 스타일 설명은 다음 작업에서 갱신`;
+  if (status === "failed") return `${count}장 참조 · 스타일 분석은 다음 작업에서 재시도`;
+  return `${count}장 참조 · 스타일 설명은 다음 작업에서 생성`;
 }
 
 function renderAccountSampleImage(account = selectedAccount()) {
@@ -988,21 +989,53 @@ function renderAccountSampleImage(account = selectedAccount()) {
     const status = $(statusId);
     if (!preview || !status) continue;
     preview.innerHTML = "";
-    if (account?.sampleImageUrl) {
-      const image = document.createElement("img");
-      image.src = account.sampleImageUrl;
-      image.alt = "AI 이미지 생성에 사용할 참조 이미지";
-      preview.appendChild(image);
-    } else {
+    const images = account?.referenceImages || [];
+    if (!images.length) {
       const empty = document.createElement("span");
       empty.textContent = "참조 이미지 없음";
       preview.appendChild(empty);
+    } else {
+      for (const item of images) {
+        const card = document.createElement("div");
+        card.className = "reference-image-card";
+        const image = document.createElement("img");
+        image.src = item.url || "";
+        image.alt = item.name || "AI 참조 이미지";
+        const name = document.createElement("small");
+        name.textContent = item.name || "참조 이미지";
+        name.title = item.name || "";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "ghost danger-button";
+        remove.textContent = "이 사진 삭제";
+        remove.setAttribute("aria-label", `${item.name || "참조 이미지"} 삭제`);
+        remove.addEventListener("click", () => deleteReferenceImage(item.id));
+        card.append(image, name, remove);
+        preview.appendChild(card);
+      }
     }
     status.textContent = accountImageStatusLabel(account);
     const chooseButton = $(chooseId);
     const deleteButton = $(deleteId);
     if (chooseButton) chooseButton.disabled = !account;
-    if (deleteButton) deleteButton.disabled = !account || !account.sampleImagePath;
+    if (deleteButton) deleteButton.disabled = !images.length;
+  }
+}
+
+async function deleteReferenceImage(referenceId = "") {
+  const account = selectedAccount();
+  if (!account || !account.referenceImages?.length) return;
+  const message = referenceId
+    ? "이 참조 이미지를 삭제할까요?"
+    : "선택 계정의 참조 이미지와 스타일 설명을 모두 삭제할까요?";
+  if (!window.confirm(message)) return;
+  try {
+    state.accountStore = await window.blogAuto.deleteAccountSampleImage(account.id, referenceId);
+    renderAccounts();
+    fillAccountForm(selectedAccount());
+    scheduleSettingsSave();
+  } catch (error) {
+    addLog({ level: "error", message: `참조 이미지 삭제 실패: ${error.message}`, at: new Date().toISOString() });
   }
 }
 
@@ -1776,6 +1809,7 @@ async function boot() {
       id: makeId("acct"),
       label: $("#accountLabel").value.trim() || blogId,
       blogId,
+      referenceImages: [],
       sampleImagePath: "",
       sampleImageHash: "",
       sampleImageUpdatedAt: "",
@@ -1841,21 +1875,8 @@ async function boot() {
   $("#chooseAccountSampleImageButton").addEventListener("click", chooseReferenceImage);
   $("#chooseReferenceImageButton").addEventListener("click", chooseReferenceImage);
 
-  async function deleteReferenceImage() {
-    const account = selectedAccount();
-    if (!account || !account.sampleImagePath) return;
-    if (!window.confirm("선택 계정의 참조 이미지와 스타일 설명을 삭제할까요?")) return;
-    try {
-      state.accountStore = await window.blogAuto.deleteAccountSampleImage(account.id);
-      renderAccounts();
-      fillAccountForm(selectedAccount());
-      scheduleSettingsSave();
-    } catch (error) {
-      addLog({ level: "error", message: `참조 이미지 삭제 실패: ${error.message}`, at: new Date().toISOString() });
-    }
-  }
-  $("#deleteAccountSampleImageButton").addEventListener("click", deleteReferenceImage);
-  $("#deleteReferenceImageButton").addEventListener("click", deleteReferenceImage);
+  $("#deleteAccountSampleImageButton").addEventListener("click", () => deleteReferenceImage());
+  $("#deleteReferenceImageButton").addEventListener("click", () => deleteReferenceImage());
 
   $("#toggleAccountManagerButton").addEventListener("click", () => {
     state.accountManagerOpen = !state.accountManagerOpen;

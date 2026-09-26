@@ -1324,6 +1324,13 @@ if (visibleModels.map((model) => model.id).join(",") !== "gpt-6-astra,gpt-6-sol"
   failed = true;
   console.error("Codex model list must include current visible models, exclude hidden models, and accept GPT-6 Sol");
 }
+const { normalizeReferenceImages } = require("../src/lib/accountStore");
+const legacyReferences = normalizeReferenceImages({ sampleImagePath: "C:/legacy/sample.png", sampleImageHash: "legacy-hash" });
+if (legacyReferences.length !== 1 || legacyReferences[0].path !== "C:/legacy/sample.png"
+  || normalizeReferenceImages({ referenceImages: [], sampleImagePath: "C:/legacy/sample.png" }).length !== 0) {
+  failed = true;
+  console.error("Existing single reference images must migrate, while an explicitly empty list must stay empty");
+}
 if (!sourceFiles.codexRunner.content.includes("\"--ephemeral\"") || !sourceFiles.codexRunner.content.includes("\"--ignore-rules\"")) {
   failed = true;
   console.error("src/lib/codexRunner.js: startup usage snapshot should be ephemeral and ignore project rules");

@@ -112,15 +112,15 @@
                   <input id="blogId" name="blogId" placeholder="예: 블로그 주소의 ID" />
                 </label>
                 <div class="account-sample-image">
-                  <div class="sample-image-preview" id="accountSampleImagePreview">
+                  <div class="reference-image-list" id="accountSampleImagePreview">
                     <span>참조 이미지 없음</span>
                   </div>
                   <div class="sample-image-meta">
                     <strong>AI 이미지 참조</strong>
-                    <small id="accountImagePromptStatus">선택한 이미지를 생성에 직접 참조합니다.</small>
+                    <small id="accountImagePromptStatus">최대 10장을 생성에 직접 참조합니다.</small>
                     <div class="button-row">
-                      <button id="chooseAccountSampleImageButton" class="ghost" type="button">이미지 업로드 / 변경</button>
-                      <button id="deleteAccountSampleImageButton" class="ghost danger-button" type="button">삭제</button>
+                      <button id="chooseAccountSampleImageButton" class="ghost" type="button">이미지 추가 (여러 장)</button>
+                      <button id="deleteAccountSampleImageButton" class="ghost danger-button" type="button">전체 삭제</button>
                     </div>
                   </div>
                 </div>
@@ -322,13 +322,13 @@
             </div>
           </div>
           <div class="account-sample-image image-reference">
-            <div class="sample-image-preview" id="referenceImagePreview"><span>참조 이미지 없음</span></div>
+            <div class="reference-image-list" id="referenceImagePreview"><span>참조 이미지 없음</span></div>
             <div class="sample-image-meta">
               <strong>선택 계정의 AI 참조 이미지</strong>
-              <small id="referenceImageStatus">이미지를 업로드하면 다음 생성 작업의 타이틀·본문 이미지에 참조합니다.</small>
+              <small id="referenceImageStatus">최대 10장을 업로드해 다음 이미지 생성에 참조합니다.</small>
               <div class="button-row">
-                <button id="chooseReferenceImageButton" class="ghost" type="button">참조 이미지 업로드</button>
-                <button id="deleteReferenceImageButton" class="ghost danger-button" type="button">삭제</button>
+                <button id="chooseReferenceImageButton" class="ghost" type="button">참조 이미지 추가</button>
+                <button id="deleteReferenceImageButton" class="ghost danger-button" type="button">전체 삭제</button>
               </div>
             </div>
           </div>
