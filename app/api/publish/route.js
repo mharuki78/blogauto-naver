@@ -22,12 +22,16 @@ export async function POST(request) {
   let client;
   let session;
   let browser;
+  let job;
   try {
-    const job = await loadJob(parsed.data.jobId);
+    job = await loadJob(parsed.data.jobId);
     if (!job) return Response.json({ error: "작업을 찾을 수 없습니다." }, { status: 404 });
-    if (job.status === "published") return Response.json({ error: "이미 발행된 작업입니다." }, { status: 409 });
+    if (job.status !== "draft") return Response.json({ error: "이 작업은 발행 중이거나 발행 결과 확인이 필요합니다." }, { status: 409 });
     client = browserbaseClient();
     session = await createBrowserSession(client, parsed.data.contextId);
+    job.status = "publishing";
+    job.publishAttemptAt = new Date().toISOString();
+    await saveJob(job);
     browser = await chromium.connectOverCDP(session.connectUrl);
     const context = browser.contexts()[0];
     await publishToNaver({
@@ -49,6 +53,11 @@ export async function POST(request) {
     await saveJob(job);
     return Response.json({ job });
   } catch (error) {
+    if (job?.status === "publishing") {
+      job.status = "publish_review_required";
+      job.publishError = error.message || "발행 결과를 확인할 수 없습니다.";
+      await saveJob(job).catch(() => {});
+    }
     return Response.json({ error: error.message || "네이버 발행에 실패했습니다." }, { status: 500 });
   } finally {
     if (session) await releaseBrowserSession(client, session.id, browser);

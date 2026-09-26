@@ -17,7 +17,7 @@ export async function PATCH(request, { params }) {
     const { id } = await params;
     const job = await loadJob(id);
     if (!job) return Response.json({ error: "작업을 찾을 수 없습니다." }, { status: 404 });
-    if (job.status === "published") return Response.json({ error: "발행된 글은 수정할 수 없습니다." }, { status: 409 });
+    if (job.status === "published" || job.status === "publishing") return Response.json({ error: "발행 중이거나 완료된 글은 수정할 수 없습니다." }, { status: 409 });
     const input = await request.json();
     const title = String(input.title || "").trim();
     const article = String(input.article || "").trim();
