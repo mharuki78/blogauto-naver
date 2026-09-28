@@ -6,10 +6,11 @@ const zlib = require("node:zlib");
 const { pathToFileURL } = require("node:url");
 const { readHistory, appendHistory, ensureRuntimeFiles } = require("./lib/history");
 const { createEmbedding, cosineSimilarity } = require("./lib/embedding");
-const { collectSearchResults, summarizeSourceQuality } = require("./lib/search");
+const { collectSearchResults, collectReferenceSources, normalizeReferenceUrls, summarizeSourceQuality } = require("./lib/search");
+const { normalizeProductModel, normalizeProductUrl, resolveProductReference } = require("./lib/productReference");
 const { runCodexGeneration, fetchCodexUsageSnapshot } = require("./lib/codexRunner");
 const { normalizeAgentResult, getPreviewImages } = require("./lib/imageAssets");
-const { publishToNaver, checkNaverSession, verifyOpenNaverSession } = require("./lib/naverPublisher");
+const { publishToNaver, checkNaverSession, verifyOpenNaverSession, naverSessionFailureStatus } = require("./lib/naverPublisher");
 const { publishToTistory, checkTistorySession } = require("./lib/tistoryPublisher");
 const { ensureSettingsFile, normalizeCodexModel, normalizeImageAspectRatio, normalizeMaxBodyImages, resolveCodexCmdPath, readSettings, writeSettings } = require("./lib/settings");
 const { getAvailableCodexModels } = require("./lib/codexModels");
@@ -38,7 +39,8 @@ function createWindow() {
     minWidth: 980,
     minHeight: 720,
     backgroundColor: "#f4f7f5",
-    title: "Bolg Automator - Made by Hyunjin",
+    title: "Himawari Blog Automator - Made by Hyunjin",
+    icon: path.join(__dirname, "assets", "app-icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -304,12 +306,16 @@ function clearPendingNaverPublishDraft(runtimeRoot) {
   writeSettings(runtimeRoot, { pendingNaverPublishDraft: null });
 }
 
-function pendingDraftMatches(draft, { account, blogId, category } = {}) {
+function pendingDraftMatches(draft, { account, blogId, category, topic, productModel, productSiteUrl, productDetailUrl } = {}) {
   if (!draft || typeof draft !== "object") return false;
   const accountId = String(account?.id || "");
   return String(draft.accountId || "") === accountId
     && String(draft.blogId || "") === String(blogId || "")
     && String(draft.category || "") === String(category || "")
+    && String(draft.topic || "").trim() === String(topic || "").trim()
+    && String(draft.productModel || "") === String(productModel || "")
+    && String(draft.productSiteUrl || "") === String(productSiteUrl || "")
+    && String(draft.productDetailUrl || "") === String(productDetailUrl || "")
     && String(draft.status || "") === "pending_naver_publish";
 }
 
@@ -319,6 +325,9 @@ function buildPendingNaverPublishDraft({
   blogId,
   category,
   topic,
+  productModel,
+  productSiteUrl,
+  productDetailUrl,
   keyword,
   agentResult,
   tags,
@@ -336,16 +345,21 @@ function buildPendingNaverPublishDraft({
   if (!agentResult?.title || !agentResult?.article) return null;
   return {
     status: "pending_naver_publish",
+    referencePolicyVersion: "informational-product-footer-v4",
     jobId,
     createdAt: new Date().toISOString(),
     accountId: account?.id || "",
     blogId,
     category,
     topic,
+    productModel,
+    productSiteUrl,
+    productDetailUrl,
     keyword,
     title: agentResult.title,
     article: agentResult.article,
     titleImagePath: agentResult.titleImagePath || "",
+    titleIsReferenceOriginal: agentResult.titleIsReferenceOriginal === true,
     bodyImages: Array.isArray(agentResult.bodyImages) ? agentResult.bodyImages : [],
     tags: Array.isArray(tags) ? tags : [],
     publishPrivate,
@@ -821,7 +835,7 @@ async function verifyPublishSessionBeforeGeneration({ runtimeRoot, account, blog
       log: (message, level) => safeLog(jobId, message, level)
     });
   } catch (error) {
-    if (error.code === "SESSION_EXPIRED" && account.id) {
+    if (naverSessionFailureStatus(error) && account.id) {
       updateAccountSession(runtimeRoot, account.id, "expired", settings);
       emitAccountStore(runtimeRoot);
     }
@@ -1037,9 +1051,26 @@ async function startJob(form) {
   const publishToTistoryAfterNaver = shouldPublish && form.publishToTistoryAfterNaver === true;
   let tistoryPublishReady = publishToTistoryAfterNaver;
   const tistoryBlogId = String(form.tistoryBlogId || settings.tistoryBlogId || "").trim();
+  let referenceUrls;
+  let productModel;
+  let productSiteUrl;
+  let productDetailUrl;
+  try {
+    referenceUrls = normalizeReferenceUrls(form.referenceUrls ?? settings.referenceUrls ?? "");
+    productModel = normalizeProductModel(form.productModel ?? settings.productModel ?? "");
+    productSiteUrl = normalizeProductUrl(form.productSiteUrl ?? settings.productSiteUrl ?? "https://himawari.co.kr/") || "https://himawari.co.kr/";
+    productDetailUrl = normalizeProductUrl(form.productDetailUrl ?? settings.productDetailUrl ?? "", "제품 상세 URL");
+  } catch (error) {
+    activeJob = null;
+    throw error;
+  }
   if (!category) {
     activeJob = null;
     throw new Error("카테고리는 필수입니다.");
+  }
+  if (!productModel) {
+    activeJob = null;
+    throw new Error("글 마지막에 소개할 자사 제품 모델명을 입력해 주세요.");
   }
   if (!categoryKeyword) {
     activeJob = null;
@@ -1087,14 +1118,15 @@ async function startJob(form) {
     }
   } catch (error) {
     activeJob = null;
-    if (error.code === "SESSION_EXPIRED") {
+    if (naverSessionFailureStatus(error)) {
+      const failedStatus = naverSessionFailureStatus(error);
       if (account.id) {
         updateAccountSession(runtimeRoot, account.id, "expired", settings);
         emitAccountStore(runtimeRoot);
         await closeNaverSession(sessionKeyFor(account, browserProfileDir));
       }
       safeLog(jobId, error.message, "warn");
-      updateStatus(jobId, "session_expired", error.message);
+      updateStatus(jobId, failedStatus, error.message);
       emit("job:complete", {
         jobId,
         accountId: account.id || "",
@@ -1102,7 +1134,7 @@ async function startJob(form) {
         keyword: "",
         category,
         blogId,
-        status: "session_expired",
+        status: failedStatus,
         title: "",
         article: "",
         images: [],
@@ -1111,7 +1143,7 @@ async function startJob(form) {
         tags: [],
         history: readHistory(runtimeRoot)
       });
-      return { status: "session_expired", reason: error.message };
+      return { status: failedStatus, reason: error.message };
     }
     throw error;
   }
@@ -1155,6 +1187,10 @@ async function startJob(form) {
   writeSettings(runtimeRoot, {
     blogId,
     topic,
+    productModel,
+    productSiteUrl,
+    productDetailUrl,
+    referenceUrls: referenceUrls.join("\n"),
     keyword,
     category,
     codexCmdPath,
@@ -1187,11 +1223,16 @@ async function startJob(form) {
   let latestLaneResult = normalizeResearchLaneResult({}, keywordLanePlan);
   let latestResearchTitleResult = null;
   const pendingDraft = settings.pendingNaverPublishDraft;
-  if (shouldPublish && pendingDraftMatches(pendingDraft, { account, blogId, category })) {
+  const pendingReferenceCompatible = pendingDraft?.referencePolicyVersion === "informational-product-footer-v4";
+  if (pendingDraft && !pendingReferenceCompatible) {
+    safeLog(jobId, "이전 방식의 원고는 제품 정체성 검수를 거치지 않아 재사용하지 않고 새로 작성합니다.");
+  }
+  if (shouldPublish && pendingReferenceCompatible && pendingDraftMatches(pendingDraft, { account, blogId, category, topic, productModel, productSiteUrl, productDetailUrl })) {
     const resumeAgentResult = {
       title: pendingDraft.title || "",
       article: pendingDraft.article || "",
       titleImagePath: pendingDraft.titleImagePath || "",
+      titleIsReferenceOriginal: pendingDraft.titleIsReferenceOriginal === true,
       bodyImages: Array.isArray(pendingDraft.bodyImages) ? pendingDraft.bodyImages : [],
       imageWarnings: []
     };
@@ -1221,6 +1262,7 @@ async function startJob(form) {
         title: resumeAgentResult.title,
         article: resumeAgentResult.article,
         titleImagePath: resumeAgentResult.titleImagePath,
+        titleIsReferenceOriginal: resumeAgentResult.titleIsReferenceOriginal === true,
         bodyImages: resumeAgentResult.bodyImages,
         breakSentencesInBody: pendingDraft.breakSentencesInBody !== false,
         tags: resumeTags,
@@ -1253,6 +1295,7 @@ async function startJob(form) {
             title: resumeAgentResult.title,
             article: resumeAgentResult.article,
             titleImagePath: resumeAgentResult.titleImagePath,
+            titleIsReferenceOriginal: resumeAgentResult.titleIsReferenceOriginal === true,
             bodyImages: resumeAgentResult.bodyImages,
             breakSentencesInBody: pendingDraft.breakSentencesInBody !== false,
             tags: resumeTags,
@@ -1314,15 +1357,15 @@ async function startJob(form) {
       });
       return { status: "success", resumedPendingPublish: true };
     } catch (error) {
-      if (error.code === "SESSION_EXPIRED" && account.id) {
+      if (naverSessionFailureStatus(error) && account.id) {
         updateAccountSession(runtimeRoot, account.id, "expired", settings);
         emitAccountStore(runtimeRoot);
       }
       safeLog(jobId, error.message, "error");
-      updateStatus(jobId, error.code === "SESSION_EXPIRED" ? "session_expired" : "failed", error.message);
+      updateStatus(jobId, (naverSessionFailureStatus(error) || "failed"), error.message);
       emit("job:complete", {
         ...nonSensitiveJob,
-        status: error.code === "SESSION_EXPIRED" ? "session_expired" : "failed",
+        status: (naverSessionFailureStatus(error) || "failed"),
         title: resumeAgentResult.title,
         article: resumeAgentResult.article,
         images: getPreviewImages(resumeAgentResult),
@@ -1331,7 +1374,7 @@ async function startJob(form) {
         history: readHistory(runtimeRoot)
       });
       return {
-        status: error.code === "SESSION_EXPIRED" ? "session_expired" : "failed",
+        status: (naverSessionFailureStatus(error) || "failed"),
         reason: error.message,
         resumedPendingPublish: true
       };
@@ -1369,6 +1412,30 @@ async function startJob(form) {
     }, 60000);
     let codexResult;
     try {
+      const referenceOptions = {
+        topic,
+        keyword,
+        category,
+        publishPurpose: form.publishPurpose || "",
+        topicMode: form.topicMode || "manual",
+        searchNeed: "normal",
+        trustBlogAsSource: form.trustBlogAsSource === true,
+        freshnessLevel: form.freshnessLevel || "auto",
+        currentDate: currentDateLabel
+      };
+      const referenceSources = await collectReferenceSources(referenceUrls, referenceOptions,
+        (message, level) => safeLog(jobId, message, level, "research"));
+      const productReference = productModel
+        ? await resolveProductReference({ model: productModel, siteUrl: productSiteUrl, detailUrl: productDetailUrl }, {
+          log: (message) => safeLog(jobId, message, "info", "research")
+        })
+        : null;
+      if (productReference) {
+        safeLog(jobId, `제품 No.${productModel} 확인 완료: ${productReference.title} (${productReference.sourceUrl})`, "info", "research");
+      }
+      const referenceQuality = referenceSources.length
+        ? summarizeSourceQuality(referenceSources, form.topicMode || "manual", referenceOptions)
+        : { status: "not_requested" };
       codexResult = await runCodexGeneration({
         codexCmdPath,
         runtimeRoot,
@@ -1378,13 +1445,14 @@ async function startJob(form) {
         keyword,
         category,
         topicMode: form.topicMode || "manual",
-        searchResults: [],
+        searchResults: [...(productReference ? [productReference.candidate] : []), ...referenceSources],
+        productReference,
         currentDateLabel,
         includeTitleImage,
         titleImageAspectRatio,
         bodyImageAspectRatio,
         maxBodyImages,
-        sourceQuality: { status: "not_requested" },
+        sourceQuality: referenceQuality,
         excludedTopics: form.excludedTopics || "",
         publishPurpose: form.publishPurpose || "",
         preferredTone: form.preferredTone || "",
@@ -1531,7 +1599,7 @@ async function startJob(form) {
           }, (message, level) => safeLog(jobId, message, level, "research"));
           const mergedSearchResults = mergeSearchResults(searchContext.previousSearchResults, searchResults);
           safeLog(jobId, `검색 후보 수집 완료: ${searchResults.length}개, 누적 ${mergedSearchResults.length}개`, "info", "research");
-          const sourceQuality = summarizeSourceQuality(mergedSearchResults, form.topicMode || "manual", {
+          const sourceQuality = summarizeSourceQuality(mergedSearchResults.filter((item) => item.sourceId !== "product-reference-1"), form.topicMode || "manual", {
             topic: searchTopic,
             keyword: searchKeyword,
             category,
@@ -1725,6 +1793,7 @@ async function startJob(form) {
         title: agentResult.title,
         article: agentResult.article,
         titleImagePath: agentResult.titleImagePath,
+        titleIsReferenceOriginal: agentResult.titleIsReferenceOriginal === true,
         bodyImages: agentResult.bodyImages,
         breakSentencesInBody,
         tags,
@@ -1755,6 +1824,7 @@ async function startJob(form) {
             title: agentResult.title,
             article: agentResult.article,
             titleImagePath: agentResult.titleImagePath,
+            titleIsReferenceOriginal: agentResult.titleIsReferenceOriginal === true,
             bodyImages: agentResult.bodyImages,
             breakSentencesInBody,
             tags,
@@ -1835,13 +1905,11 @@ async function startJob(form) {
     });
     return { status: publishStatus, keywordLane: keywordLaneResultPayload(latestLaneResult) };
   } catch (error) {
-    const failedStatus = error.code === "SESSION_EXPIRED"
-      ? "session_expired"
-      : error.code === "CODEX_USAGE_LIMIT" ? "codex_usage_limit"
+    const failedStatus = naverSessionFailureStatus(error) || (error.code === "CODEX_USAGE_LIMIT" ? "codex_usage_limit"
         : error.code === "CODEX_EXEC_FAILED" ? "codex_exec_failed"
-          : "failed";
+          : "failed");
     persistCodexRateLimits(runtimeRoot, jobTokenUsage.rateLimits);
-    if (failedStatus === "session_expired" && account.id) {
+    if (naverSessionFailureStatus(error) && account.id) {
       updateAccountSession(runtimeRoot, account.id, "expired", settings);
       emitAccountStore(runtimeRoot);
       const pendingDraft = buildPendingNaverPublishDraft({
@@ -1850,6 +1918,9 @@ async function startJob(form) {
         blogId,
         category,
         topic,
+        productModel,
+        productSiteUrl,
+        productDetailUrl,
         keyword,
         agentResult: latestAgentResultForResume,
         tags: latestTagsForResume,

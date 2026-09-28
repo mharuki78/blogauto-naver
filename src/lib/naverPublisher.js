@@ -17,6 +17,21 @@ function securityCheckTimeoutError(message = "네이버 보안 확인 또는 캡
   return error;
 }
 
+function naverSessionFailureStatus(error) {
+  if (error?.code === "NAVER_ACCOUNT_PROTECTED") return "naver_protected";
+  if (error?.code === "SECURITY_CHECK_TIMEOUT") return "naver_verification_required";
+  if (error?.code === "SESSION_EXPIRED") return "session_expired";
+  return "";
+}
+
+function looksLikeAccountProtection(url, bodyText) {
+  let parsed;
+  try { parsed = new URL(url); } catch { return false; }
+  if (parsed.hostname !== "nid.naver.com") return false;
+  const text = String(bodyText || "").replace(/\s+/g, " ");
+  return /보호\s*조치\s*(?:되었습니다|됐습니다|되었|된\s*아이디|중|해제)|아이디(?:가|는|에)?\s*보호\s*조치|로그인(?:이|을)?\s*(?:제한|차단)\s*(?:되었습니다|됐습니다|되었|합니다|중)/i.test(text);
+}
+
 function authoringRestartRequiredError(stage = "글 작성") {
   const error = new Error(`${stage} 중 재로그인은 완료됐지만 작성 중이던 임시글을 복구하지 못해 처음부터 다시 작성합니다.`);
   error.code = "NAVER_AUTHORING_RESTART_REQUIRED";
@@ -299,9 +314,7 @@ async function typeAtCurrentCursor(page, text, log = () => {}, label = "입력")
   const value = String(text || "");
   log(`${label} 시작`);
   await withTimeout(
-    page.keyboard.type(value, {
-      delay: 75 + Math.floor(Math.random() * 45)
-    }),
+    page.keyboard.insertText(value),
     Math.max(15000, value.length * 250),
     `${label} 제한 시간을 초과했습니다.`
   );
@@ -679,12 +692,17 @@ async function waitForLoginComplete(page, log, timeout = 10 * 60 * 1000, selecto
     await sleep(Math.max(0, Number(pollInterval) || 0));
   }
 
-  throw new Error("네이버 로그인 또는 보안 확인 완료를 제한 시간 안에 확인하지 못했습니다.");
+  throw securityCheckTimeoutError("네이버 로그인 또는 보안 확인 완료를 제한 시간 안에 확인하지 못했습니다.");
 }
 
 async function detectLoginState(page, selectors = {}) {
   const url = page.url();
   const bodyText = await readBodyText(page);
+  if (looksLikeAccountProtection(url, bodyText)) {
+    const error = new Error("네이버 아이디 보호조치/로그인 제한이 감지되어 자동 작업을 중지합니다. 네이버에서 보호조치 사유를 확인하고 본인 인증으로 해제한 뒤, 계정관리의 세션확인을 직접 진행해 주세요.");
+    error.code = "NAVER_ACCOUNT_PROTECTED";
+    throw error;
+  }
   const idSelector = selectors.idInput || "#id";
   const passwordSelector = selectors.passwordInput || "#pw";
   const loginInputs = await visibleCount(page, `${idSelector}, ${passwordSelector}`);
@@ -1255,11 +1273,15 @@ async function waitForPostWriteTitle(page, selectors, options, postWriteUrl, log
   let editorLogged = false;
   let securityLogged = false;
   let wrongUrlCount = 0;
+  let loginRecoveryAttempts = 0;
 
   while (Date.now() < deadline) {
     const url = page.url();
     const bodyText = await readBodyText(page);
     const loginState = await detectLoginState(page, selectors);
+    if (["security_check", "login_required"].includes(loginState.state) && ++loginRecoveryAttempts > 2) {
+      throw sessionExpiredError("인증 화면으로 반복 이동하여 자동 재접속을 중지합니다. 계정관리에서 세션확인을 완료한 후 직접 다시 시작해 주세요.");
+    }
 
     if (loginState.state === "security_check") {
       if (!securityLogged) {
@@ -1742,8 +1764,11 @@ function normalBodyEditorSelectors(selectors) {
 
 async function isNormalBodyTextLocator(locator) {
   return locator.evaluate((node) => {
+    if (!node.closest(".se-section-text")) return false;
     const blockedAncestor = node.closest([
       ".se-component-quotation",
+      ".se-image",
+      ".se-component-image",
       ".se-section-quotation",
       "[class*='quotation']",
       "[class*='quote']",
@@ -1761,10 +1786,7 @@ async function isNormalBodyTextLocator(locator) {
       node.getAttribute("placeholder"),
       node.getAttribute("aria-label")
     ].join(" ").toLowerCase();
-    const visibleText = String(node.textContent || "");
-
-    return !/(quotation|quote|source|caption|toolbar|popup|title)/i.test(metaText)
-      && !/(\ucd9c\ucc98|\uc81c\ubaa9)/.test(visibleText);
+    return !/(quotation|quote|source|caption|toolbar|popup|title)/i.test(metaText);
   });
 }
 
@@ -1839,30 +1861,129 @@ async function exitQuoteBlock(page, selectors, log, options = {}) {
   }
 }
 
-async function focusBodyParagraph(page, selectors, log, label = "본문 문단 입력 위치") {
+async function focusBodyParagraph(page, selectors, log, label = "본문 문단 입력 위치", afterComponent = null) {
   await page.keyboard.press("Escape").catch(() => {});
+  const anchor = afterComponent ? await afterComponent.elementHandle().catch(() => null) : null;
+  const isTarget = async (locator) => await isNormalBodyTextLocator(locator)
+    && (!anchor || await locator.evaluate((node, previous) => {
+      if (!(previous.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+      let next = previous.nextElementSibling;
+      while (next && !next.matches(".se-component")) next = next.nextElementSibling;
+      return !next || next.contains(node);
+    }, anchor));
   let editor = await findLowerVisibleLocator(
     page,
     normalBodyEditorSelectors(selectors),
     5000,
-    isNormalBodyTextLocator
+    isTarget
   ).catch(() => null);
   if (!editor) {
-    await clickBelowQuoteBlock(page).catch(() => false);
+    if (afterComponent) {
+      await safeClickLocator(page, afterComponent, log, "사진 뒤 본문 위치 복구");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+    } else {
+      await clickBelowQuoteBlock(page).catch(() => false);
+    }
     editor = await findLowerVisibleLocator(
       page,
       normalBodyEditorSelectors(selectors),
       5000,
-      isNormalBodyTextLocator
+      isTarget
     ).catch(() => null);
   }
   if (editor) {
     await safeClickLocator(page, editor, log, label);
+    await editor.evaluate((node) => {
+      const selection = node.ownerDocument.getSelection();
+      const range = node.ownerDocument.createRange();
+      range.selectNodeContents(node);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
     await page.keyboard.press("End").catch(() => {});
     return editor;
   }
   log(`${label}를 찾지 못했습니다. 현재 커서 위치에 입력합니다.`, "warn");
   return null;
+}
+
+function normalizedBodyText(text) {
+  return String(text || "").normalize("NFC").replace(/[\s\u200b-\u200d\ufeff]/g, "");
+}
+
+async function readEditorBodyText(page) {
+  const texts = [];
+  for (const frame of page.frames()) {
+    const text = await frame.locator(".se-section-text .se-module-text").evaluateAll((nodes) =>
+      nodes.filter((node) => !node.closest(".se-component-quotation, .se-section-quotation, .se-image, [class*='caption'], [class*='title'], [class*='quote']"))
+        .map((node) => node.innerText || node.textContent || "").join("\n")
+    );
+    texts.push(text);
+  }
+  return normalizedBodyText(texts.join("\n"));
+}
+
+function textOccurrenceCount(text, value) {
+  return value ? text.split(value).length - 1 : 0;
+}
+
+async function insertVerifiedBodyParagraph(page, selectors, text, options, log, afterComponent = null) {
+  const expected = normalizedBodyText(text);
+  const before = await readEditorBodyText(page);
+  const beforeCount = textOccurrenceCount(before, expected);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const editor = await focusBodyParagraph(page, selectors, log, "본문 입력 위치", afterComponent);
+    if (!editor) throw new Error("본문 입력 위치를 확보하지 못했습니다. 빈 본문으로 발행하지 않습니다.");
+    await typeBodyParagraph(page, text, options, () => {});
+    const deadline = Date.now() + 2500;
+    let actual = "";
+    do {
+      actual = await readEditorBodyText(page);
+      if (textOccurrenceCount(actual, expected) > beforeCount) return;
+      await sleep(100);
+    } while (Date.now() < deadline);
+    // Retry only a completely lost input; partial input must not be duplicated.
+    if (actual !== before) throw new Error("본문 일부가 편집기에 정상 반영되지 않았습니다. 작성 내용을 보존하고 발행을 멈춥니다.");
+    log("사진 뒤 본문 입력이 반영되지 않아 입력 위치를 복구합니다.", "warn");
+  }
+  throw new Error("본문 문단 입력을 확인하지 못했습니다. 소제목과 사진만 발행하지 않도록 중단했습니다.");
+}
+
+async function verifyArticleBodyPresent(page, article, log = () => {}) {
+  const paragraphs = splitArticleBlocks(article).filter((block) => block.type === "paragraph");
+  if (!paragraphs.length) throw new Error("작성할 본문 문장이 없습니다. 소제목과 사진만 발행할 수 없습니다.");
+  const actual = await readEditorBodyText(page);
+  const missing = paragraphs.filter((block) => !actual.includes(normalizedBodyText(block.text)));
+  if (missing.length) throw new Error(`편집기에 본문 ${missing.length}개 문단이 누락되어 발행을 중단했습니다. 저장된 생성 결과로 다시 입력해 주세요.`);
+  log(`본문 ${paragraphs.length}개 문단의 실제 편집기 입력을 확인했습니다.`);
+}
+
+async function repairExistingDraftBody(page, selectors, options, log) {
+  const components = [];
+  const ids = new Set();
+  for (const component of await collectImageComponentLocators(page)) {
+    const id = await component.getAttribute("data-compid");
+    if (id && !ids.has(id)) { ids.add(id); components.push(component); }
+  }
+  const images = options.bodyImages || [];
+  const offset = options.titleImagePath ? 1 : 0;
+  let anchor = null;
+  let repaired = 0;
+  for (const block of splitArticleBlocks(options.article)) {
+    if (block.type === "image") {
+      const index = images.findIndex((image) => Number(image.sequence) === block.sequence);
+      anchor = index >= 0 && components.length === images.length + offset ? components[index + offset] : null;
+    }
+    if (block.type !== "paragraph" || (await readEditorBodyText(page)).includes(normalizedBodyText(block.text))) continue;
+    if (images.length && !anchor) throw new Error("기존 글의 사진 순서를 확인하지 못해 본문을 자동 복구할 수 없습니다. 저장된 원고는 유지됩니다.");
+    await insertVerifiedBodyParagraph(page, selectors, block.text, options, log, anchor);
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    repaired += 1;
+  }
+  if (repaired) log(`기존 임시글에서 빠진 본문 ${repaired}개 문단을 복구했습니다.`);
 }
 
 async function insertQuoteBlock(page, selectors, text, styleLabel, label, log, options = {}) {
@@ -1945,7 +2066,7 @@ function splitArticleBlocks(article) {
 
 async function insertArticleWithImages(page, selectors, article, bodyImages, options, log) {
   const blocks = splitArticleBlocks(article);
-  const bodyTypingLog = () => {};
+  let lastImageComponent = null;
   log("본문 글쓰기 시작");
   await assertNaverSessionActive(page, selectors, log, "본문 입력 시작", options.sessionRecoveryOptions);
   const editor = await findLowerVisibleLocator(page, bodyEditorSelectors(selectors), 30000);
@@ -1955,7 +2076,7 @@ async function insertArticleWithImages(page, selectors, article, bodyImages, opt
   for (const block of blocks) {
     await assertNaverSessionActive(page, selectors, log, "본문 입력", options.sessionRecoveryOptions);
     if (block.type === "paragraph") {
-      await typeBodyParagraph(page, block.text, options, bodyTypingLog);
+      await insertVerifiedBodyParagraph(page, selectors, block.text, options, log, lastImageComponent);
       await page.keyboard.press("Enter");
       await page.keyboard.press("Enter");
       continue;
@@ -1978,11 +2099,13 @@ async function insertArticleWithImages(page, selectors, article, bodyImages, opt
     await page.keyboard.press("Enter");
     await page.keyboard.press("Enter");
     const imageComponent = await insertImageByButton(page, selectors.imageButton, image.path);
-    await ensureAiMarkForImageComponent(page, imageComponent, log, `본문 이미지 ${block.sequence}`);
+    lastImageComponent = imageComponent;
+    if (!image.isReferenceOriginal) await ensureAiMarkForImageComponent(page, imageComponent, log, `본문 이미지 ${block.sequence}`);
     await page.keyboard.press("Enter");
     await page.keyboard.press("Enter");
     log(`본문 이미지 ${block.sequence} 삽입 완료`);
   }
+  await verifyArticleBodyPresent(page, article, log);
   log("본문 글쓰기 완료");
 }
 
@@ -2532,6 +2655,7 @@ async function publishToNaver(options) {
       }
     }
 
+    let authoringRestarts = 0;
     for (;;) {
       let finalPublishAttempted = false;
       try {
@@ -2544,7 +2668,8 @@ async function publishToNaver(options) {
     );
     const useExistingDraft = reuseExistingDraft && await hasExistingDraftContent(page, titleLocator);
     if (useExistingDraft) {
-      log("Naver 글쓰기 화면에 작성된 제목/본문 또는 이미지가 있어 재입력 없이 발행 단계로 이어갑니다.");
+      await repairExistingDraftBody(page, selectors, options, log);
+      log("기존 임시글의 본문을 확인하고 발행 단계로 이어갑니다.");
     } else {
       if (reuseExistingDraft) {
         log("재사용할 작성 내용이 보이지 않아 저장된 생성 결과로 다시 입력합니다.", "warn");
@@ -2562,7 +2687,7 @@ async function publishToNaver(options) {
       }
       await assertNaverSessionActive(page, selectors, log, "타이틀 이미지 삽입 전", sessionRecoveryOptions);
       const titleImageComponent = await insertImageByButton(page, selectors.imageButton, options.titleImagePath);
-      await ensureAiMarkForImageComponent(page, titleImageComponent, log, "타이틀 이미지");
+      if (!options.titleIsReferenceOriginal) await ensureAiMarkForImageComponent(page, titleImageComponent, log, "타이틀 이미지");
       log("타이틀 이미지 삽입 완료");
       await assertNaverSessionActive(page, selectors, log, "타이틀 이미지 삽입", sessionRecoveryOptions);
       await prepareBodyAfterTitleImage(page, selectors, log);
@@ -2594,6 +2719,7 @@ async function publishToNaver(options) {
 
     await assertNaverSessionActive(page, selectors, log, "발행 설정 열기 전", sessionRecoveryOptions);
     }
+    await verifyArticleBodyPresent(page, stripDuplicateTitleLine(options.article, options.title), log);
     const publishOpened = await clickPublishSettingsButton(page, selectors, log);
     if (!publishOpened) {
       throw new Error("발행 버튼을 찾을 수 없습니다. Naver Editor DOM notes에 publishButton selector가 필요할 수 있습니다.");
@@ -2639,8 +2765,12 @@ async function publishToNaver(options) {
     break;
       } catch (error) {
         let recoveryError = error;
+        if (naverSessionFailureStatus(error)) throw error;
         if (recoveryError?.code !== "NAVER_AUTHORING_RESTART_REQUIRED") {
-          const interruptedState = await detectLoginState(page, selectors).catch(() => ({ state: "available" }));
+          const interruptedState = await detectLoginState(page, selectors).catch((stateError) => {
+            if (naverSessionFailureStatus(stateError)) throw stateError;
+            return { state: "available" };
+          });
           if (interruptedState.state !== "security_check" && interruptedState.state !== "login_required") {
             throw recoveryError;
           }
@@ -2669,6 +2799,9 @@ async function publishToNaver(options) {
           if (recoveredSuccessfully) {
             recoveryError = authoringRestartRequiredError("자동 입력");
           }
+        }
+        if (++authoringRestarts > 1) {
+          throw sessionExpiredError("작업 중 재로그인이 반복되어 자동 재작성을 중지합니다. 네이버 로그인 상태를 확인한 후 직접 다시 시작해 주세요.");
         }
         log(recoveryError.message, "warn");
         reuseExistingDraft = false;
@@ -2783,10 +2916,16 @@ async function checkNaverSession(options) {
 }
 
 module.exports = {
+  naverSessionFailureStatus,
   publishToNaver,
   checkNaverSession,
   verifyOpenNaverSession,
   _private: {
+    splitArticleBlocks,
+    insertVerifiedBodyParagraph,
+    verifyArticleBodyPresent,
+    readEditorBodyText,
+    repairExistingDraftBody,
     getReservedDateParts,
     shouldUseReservedPublishSchedule,
     isPublishSettingsButtonMeta,
@@ -2797,6 +2936,7 @@ module.exports = {
     securityCheckTimeoutError,
     authoringRestartRequiredError,
     looksLikeSecurityCheck,
+    looksLikeAccountProtection,
     detectLoginState,
     waitForSecurityCheckComplete,
     waitForLoginComplete,

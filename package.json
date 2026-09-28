@@ -17,7 +17,7 @@
   },
   "build": {
     "appId": "com.local.blogauto.naver",
-    "productName": "Bolg Automator - Made by Hyunjin",
+    "productName": "Himawari Blog Automator - Made by Hyunjin",
     "directories": {
       "output": "dist"
     },
@@ -31,12 +31,14 @@
         "to": "runtime"
       }
     ],
+    "afterPack": "scripts/apply-windows-icon.js",
     "win": {
+      "icon": "src/assets/app-icon.ico",
       "target": [
         "portable"
       ],
       "signAndEditExecutable": false,
-      "artifactName": "Bolg-Automator-Made-by-Hyunjin-${version}.${ext}"
+      "artifactName": "Himawari-Blog-Automator-Made-by-Hyunjin-${version}.${ext}"
     }
   },
   "dependencies": {
@@ -51,6 +53,7 @@
   },
   "devDependencies": {
     "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "rcedit": "^5.0.2"
   }
 }

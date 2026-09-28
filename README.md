@@ -1,4 +1,4 @@
-# Bolg Automator - Made by Hyunjin
+# Himawari Blog Automator - Made by Hyunjin
 
 ## 웹앱 (Vercel)
 

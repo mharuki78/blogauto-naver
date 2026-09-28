@@ -85,6 +85,24 @@ h1 {
   font-weight: 750;
 }
 
+.app-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 90px;
+  height: 40px;
+  overflow: hidden;
+}
+
+.brand-logo {
+  display: block;
+  flex: 0 0 auto;
+  width: 82px;
+  height: 82px;
+  object-fit: contain;
+}
+
 h2 {
   font-size: 18px;
   line-height: 1.45;

@@ -37,7 +37,7 @@ const path = require("node:path");
     await window.waitForSelector("#jobForm", { timeout: 15000 });
 
     const checks = [
-      ["title", "Bolg Automator - Made by Hyunjin"],
+      ["title", "Himawari Blog Automator - Made by Hyunjin"],
       ["blog id", "#blogId"],
       ["manual login guidance", ".account-login-guidance"],
       ["startup notice", "#startupNotice"],

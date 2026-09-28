@@ -3,16 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bolg Automator - Made by Hyunjin</title>
+    <title>Himawari Blog Automator - Made by Hyunjin</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <div>
-          <h1>Bolg Automator - Made by Hyunjin</h1>
-          <p id="runtimePath">런타임 폴더 확인 중</p>
-        </div>
+        <h1 class="app-brand">
+          <img class="brand-logo" src="../assets/himawari-logo.png" alt="Himawari Blog Automator" width="360" height="360" />
+        </h1>
+        <p id="runtimePath" hidden></p>
         <div class="agent-model-toolbar" aria-label="Agent model settings">
           <label>
             <span>Codex Model</span>
@@ -221,7 +221,27 @@
             </label>
             <label id="manualTopicLabel" class="wide">
               <span>주제</span>
-              <input id="topic" name="topic" />
+              <input id="topic" name="topic" placeholder="예: 반려견 산책 준비물과 가방 선택 요령" />
+            </label>
+            <div class="inline-row wide">
+              <label>
+                <span>소개할 제품 모델명</span>
+                <input id="productModel" placeholder="예: 0424" />
+              </label>
+              <label>
+                <span>제품 참고 사이트</span>
+                <input id="productSiteUrl" type="url" placeholder="https://himawari.co.kr/" />
+              </label>
+            </div>
+            <label class="wide">
+              <span>제품 상세 URL (선택)</span>
+              <input id="productDetailUrl" type="url" placeholder="사이트에 모델이 없을 때 해당 제품 상세 페이지 또는 브랜드 글 주소" />
+              <small class="hint">제품 모델명을 입력하면 확인된 상품 정보만 글 마지막에 소개합니다. 앞부분은 주제에 맞는 정보성 글로 작성합니다.</small>
+            </label>
+            <label class="wide">
+              <span>글 작성 참고 URL (최대 5개)</span>
+              <textarea id="referenceUrls" rows="3" placeholder="https://blog.naver.com/blogid/123456789"></textarea>
+              <small class="hint">공개된 사이트나 블로그 주소를 한 줄에 하나씩 입력하세요. 본문을 읽어 글의 근거로 활용합니다.</small>
             </label>
             <div class="check-row wide">
               <label><input id="publishAfterGenerate" type="checkbox" /> 생성 후 Naver 발행까지 진행</label>
@@ -328,7 +348,7 @@
             <div class="reference-image-list" id="referenceImagePreview"><span>참조 이미지 없음</span></div>
             <div class="sample-image-meta">
               <strong>선택 계정의 AI 참조 이미지</strong>
-              <small id="referenceImageStatus">최대 10장을 업로드해 다음 이미지 생성에 참조합니다.</small>
+              <small id="referenceImageStatus">최대 10장. 제품의 형태·색상·장식을 유지하며, 생성 결과가 일치하지 않으면 원본 사진을 사용합니다.</small>
               <div class="button-row">
                 <button id="chooseReferenceImageButton" class="ghost" type="button">참조 이미지 추가</button>
                 <button id="deleteReferenceImageButton" class="ghost danger-button" type="button">전체 삭제</button>

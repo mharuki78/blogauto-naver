@@ -5,6 +5,7 @@ const MAX_RESPONSE_CHARS = 1_500_000;
 const MAX_EXCERPT_CHARS = 1400;
 const MAX_SELECTED_CONTENT_RESULTS = 20;
 const MAX_SEARCH_QUERY_VARIANTS = 4;
+const MAX_REFERENCE_URLS = 5;
 const MAX_AUTHORITY_LINK_CANDIDATES = 6;
 const CONTENT_FETCH_CONCURRENCY = 4;
 const CANDIDATE_FETCH_TIMEOUT_MS = 20000;
@@ -186,9 +187,27 @@ function isLikelyAd(text, url) {
   return AD_WORDS.some((word) => joined.includes(word.toLowerCase()));
 }
 
+function isSearchNavigationUrl(url) {
+  const host = hostFromUrl(url);
+  let pathname = "";
+  try {
+    pathname = new URL(url).pathname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return (host === "dict.naver.com" && pathname === "/dict.search")
+    || (host === "map.naver.com" && pathname.startsWith("/v5/search"))
+    || (host === "kin.naver.com" && pathname === "/qna/questionforsearch.naver")
+    || (host === "search.naver.com" && pathname === "/search.naver")
+    || ((host === "www.google.com" || host === "google.com") && pathname === "/search");
+}
+
 function isLowValueResult(text, url) {
   const joined = `${text} ${url}`.toLowerCase();
   const host = hostFromUrl(url);
+  if (isSearchNavigationUrl(url)) {
+    return true;
+  }
   if (/검색옵션|검색\s*고객센터|개인정보처리방침|©|naver corp|도움말|고객센터/i.test(text)) {
     return true;
   }
@@ -472,6 +491,12 @@ function extractMetaDescription(html) {
   return match ? stripTags(match[1]) : "";
 }
 
+function extractPageTitle(html) {
+  const match = String(html || "").match(/<meta[^>]+(?:name|property)=["']og:title["'][^>]+content=["']([^"']+)["']/i)
+    || String(html || "").match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return match ? stripTags(match[1]).slice(0, 180) : "";
+}
+
 function extractReadableText(html) {
   const withoutNoise = String(html || "")
     .replace(/<!--[\s\S]*?-->/g, " ")
@@ -631,6 +656,7 @@ async function fetchCandidateContent(candidate) {
         CANDIDATE_FETCH_TIMEOUT_MS,
         "본문 추출 후보 요청 시간이 초과되었습니다."
       );
+      let pageTitle = extractPageTitle(html);
       outboundLinks.push(...extractAuthorityLinks(html, attemptUrl));
       const frameUrl = findNaverBlogFrame(html, attemptUrl);
       if (frameUrl) {
@@ -639,6 +665,7 @@ async function fetchCandidateContent(candidate) {
           CANDIDATE_FETCH_TIMEOUT_MS,
           "네이버 블로그 본문 프레임 요청 시간이 초과되었습니다."
         );
+        pageTitle = extractPageTitle(html) || pageTitle;
         outboundLinks.push(...extractAuthorityLinks(html, frameUrl));
       }
       const description = extractMetaDescription(html);
@@ -647,6 +674,7 @@ async function fetchCandidateContent(candidate) {
       if (text && text.length >= 80) {
         return {
           ...candidate,
+          title: candidate.title || pageTitle || hostFromUrl(candidate.url),
           fetchedUrl: attemptUrl,
           contentLength: text.length,
           excerpt: text.slice(0, MAX_EXCERPT_CHARS),
@@ -665,6 +693,63 @@ async function fetchCandidateContent(candidate) {
     excerpt: "",
     outboundLinks: uniqueCandidates(outboundLinks).slice(0, MAX_AUTHORITY_LINK_CANDIDATES)
   };
+}
+
+function normalizeReferenceUrls(value) {
+  const lines = Array.isArray(value) ? value : String(value || "").split(/\r?\n/);
+  const urls = [];
+  const seen = new Set();
+  for (const line of lines) {
+    const raw = String(line || "").trim();
+    if (!raw) continue;
+    if (raw.length > 2048) throw new Error("참고 URL은 주소당 2,048자 이하여야 합니다.");
+    let parsed;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      throw new Error(`참고 URL 형식이 올바르지 않습니다: ${raw.slice(0, 100)}`);
+    }
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+      throw new Error("참고 URL은 아이디·비밀번호가 없는 http 또는 https 주소여야 합니다.");
+    }
+    parsed.hash = "";
+    const normalized = parsed.toString();
+    if (isSearchNavigationUrl(normalized) || isUnsupportedContentUrl(normalized)) {
+      throw new Error(`본문 자료로 사용할 수 없는 참고 URL입니다: ${normalized}`);
+    }
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    urls.push(normalized);
+    if (urls.length > MAX_REFERENCE_URLS) throw new Error(`참고 URL은 최대 ${MAX_REFERENCE_URLS}개까지 입력할 수 있습니다.`);
+  }
+  return urls;
+}
+
+async function collectReferenceSources(value, options = {}, log = () => {}) {
+  const urls = normalizeReferenceUrls(value);
+  if (!urls.length) return [];
+  log(`입력한 참고 URL ${urls.length}개의 본문을 확인합니다.`);
+  const fetched = await mapLimit(urls, CONTENT_FETCH_CONCURRENCY, (url, index) => fetchCandidateContent({
+    sourceId: `reference-${index + 1}`,
+    provider: "user-reference",
+    userProvided: true,
+    title: "",
+    url
+  }));
+  const usable = fetched.filter((item) => String(item?.excerpt || "").trim().length >= 80);
+  fetched.forEach((item, index) => {
+    if (!item?.excerpt) log(`참고 URL 본문을 읽지 못했습니다: ${urls[index]}`, "warn");
+  });
+  if (!usable.length) {
+    throw new Error("입력한 참고 URL의 본문을 읽지 못했습니다. 공개된 HTML 글 주소인지 확인해 주세요.");
+  }
+  const profile = buildSearchProfile(options);
+  const commonTokens = selectCommonTokens(usable, options);
+  log(`참고 URL 본문 ${usable.length}/${urls.length}개를 글 자료로 전달합니다.`);
+  return usable.map((item) => ({
+    ...item,
+    relevance: scoreCandidate(item, commonTokens, options, profile)
+  }));
 }
 
 function uniqueCandidates(items) {
@@ -899,6 +984,17 @@ function buildQueryText(topic, keyword, topicMode, querySuffix = "") {
     .slice(0, 260);
 }
 
+function buildDiscoveryQuery(options) {
+  const keywordTokens = tokenize(String(options.keyword || "")
+    .replace(/([가-힣])([A-Za-z])/g, "$1 $2")
+    .replace(/([A-Za-z])([가-힣])/g, "$1 $2"));
+  const topicTokens = tokenize(options.topic || "");
+  const keyword = keywordTokens.find((token) => /[가-힣]/.test(token)) || keywordTokens[0] || "";
+  const subject = topicTokens.at(-1) || "";
+  const query = uniqueStrings([keyword, subject]).join(" ");
+  return query.length >= 3 ? query : "";
+}
+
 async function collectProviderCandidates(providers, options, log, querySuffix = "", control = {}) {
   const all = [];
   for (const provider of providers) {
@@ -991,8 +1087,6 @@ async function collectSearchResults(options, log = () => {}) {
     candidates = buildFilteredCandidates(all);
   }
 
-  if (!candidates.length) return [];
-
   const enrichAndScore = async (items) => {
     log(`검색 후보 ${items.length}개 본문 추출을 시도합니다.`);
     let completed = 0;
@@ -1032,7 +1126,9 @@ async function collectSearchResults(options, log = () => {}) {
     return { selected: scored, withContent };
   };
 
-  let { selected, withContent } = await enrichAndScore(candidates);
+  let { selected, withContent } = candidates.length
+    ? await enrichAndScore(candidates)
+    : { selected: [], withContent: [] };
   if (shouldRunFallbackForSparseSelection(selected, attemptedProviders, primary, fallback, profile)) {
     log(`Selected source candidates below ${MIN_SELECTED_CANDIDATES_BEFORE_FALLBACK}; running fallback provider once: ${fallback.toUpperCase()}`);
     const fallbackResults = await collectRawCandidates("", [fallback], { ...providerControl, forceAllProviders: true });
@@ -1072,9 +1168,20 @@ async function collectSearchResults(options, log = () => {}) {
     }
   }
 
+  if (!withContent.length && !profile.strictEvidence) {
+    const discoveryQuery = buildDiscoveryQuery(options);
+    if (discoveryQuery && !queryVariants.some((query) => query.toLowerCase() === discoveryQuery.toLowerCase())) {
+      log(`본문 자료가 없어 짧은 검색어로 다시 찾습니다: ${discoveryQuery}`, "warn");
+      const discoveryResults = await collectProviderCandidates(
+        [primary, fallback], options, log, "", { ...providerControl, queryOverride: discoveryQuery }
+      );
+      candidates = buildFilteredCandidates([...discoveryResults, ...all]);
+      ({ selected, withContent } = await enrichAndScore(candidates));
+    }
+  }
   if (!withContent.length) {
-    log("본문 추출에 성공한 후보가 없어 제목/URL 후보만 사용합니다.", "warn");
-    return candidates;
+    log("본문을 확인할 수 있는 검색 결과가 없습니다.", "warn");
+    return [];
   }
   log(`본문 추출 ${withContent.length}개, 공통 주제 후보 ${selected.length}개를 사용합니다.`);
   return selected.map((item, index) => ({
@@ -1185,10 +1292,13 @@ function summarizeSourceQuality(searchResults, _topicMode = "manual", options = 
 
 module.exports = {
   collectSearchResults,
+  collectReferenceSources,
+  normalizeReferenceUrls,
   summarizeSourceQuality,
   _private: {
     naverSearchTemplateFor,
     buildQueryText,
+    buildDiscoveryQuery,
     buildSearchProfile,
     scoreCandidate,
     summarizeSourceQuality,

@@ -1,9 +1,10 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..");
-const { _private } = require(path.join(root, "src", "lib", "naverPublisher.js"));
+const { _private, naverSessionFailureStatus } = require(path.join(root, "src", "lib", "naverPublisher.js"));
 
 function createLoginStatePage(states) {
   let index = 0;
@@ -68,6 +69,55 @@ async function run() {
     securityCheckPollInterval: 1,
     securityCheckStableReads: 1
   };
+
+  const protectedAccount = {
+    url: "https://nid.naver.com/user2/help/myInfo?menu=protect",
+    bodyText: "비정상적인 로그인이 확인되어 아이디가 보호조치 되었습니다. 보호조치 해제"
+  };
+  for (const states of [[protectedAccount], [login, protectedAccount], [captcha, protectedAccount]]) {
+    await assert.rejects(
+      _private.waitForLoginComplete(createLoginStatePage(states), () => {}, 100, selectors, 0),
+      error => naverSessionFailureStatus(error) === "naver_protected",
+      "account protection must immediately stop login polling"
+    );
+  }
+  assert.equal(_private.looksLikeAccountProtection(editor.url, protectedAccount.bodyText), false);
+  assert.equal(_private.looksLikeAccountProtection("https://nid.naver.com.evil.test/", protectedAccount.bodyText), false);
+  assert.equal(_private.looksLikeAccountProtection(login.url, "로그인 상태 유지 IP보안"), false);
+  assert.equal(_private.looksLikeAccountProtection(protectedAccount.url, "로그인이 제한되었습니다"), true);
+  await assert.rejects(
+    _private.waitForLoginComplete(createLoginStatePage([login]), () => {}, 10, selectors, 0),
+    error => naverSessionFailureStatus(error) === "naver_verification_required"
+  );
+  assert.equal(naverSessionFailureStatus(new Error("network")), "");
+
+  // Execute the actual auto loop: neither another attempt nor another account may run.
+  const renderer = fs.readFileSync(path.join(root, "src", "renderer", "app.js"), "utf8");
+  const autoLoop = renderer.slice(renderer.indexOf("async function startAutoPublishing("), renderer.indexOf("async function startManualJob("));
+  for (const status of ["naver_protected", "naver_verification_required"]) {
+    let calls = 0;
+    let badge = "";
+    const account = { id: "test", categories: [{ name: "category", keyword: "keyword" }] };
+    const targets = [{ account, category: account.categories[0] }];
+    const sandbox = {
+      state: { accountStore: { accounts: [account] } },
+      AUTO_TARGET_MAX_ATTEMPTS: 3,
+      $: () => ({ value: "60" }),
+      hasCategoryName: () => true, hasCategoryKeyword: () => true,
+      allNaverSessionsExpired: () => false, collectForm: () => ({}),
+      validateReferenceUrlsInput() {}, validateProductReferenceInput() {}, setTistoryTestButtonDisabled() {},
+      saveSettingsNow: async () => {}, setTokenTotal() {},
+      getAutoTargets: () => targets, clearPendingAutoTarget() {}, autoTargetKey: () => "test",
+      addLog() {}, accountDisplayName: () => "test", renderImages() {}, renderImageNotes() {},
+      runAutoStartJob: async () => { calls++; if (calls > 1) throw new Error("Unexpected retry"); return { status }; },
+      autoResultReason: result => result.status, setRunState: value => { badge = value; }
+    };
+    vm.createContext(sandbox);
+    await vm.runInContext(`${autoLoop}\nstartAutoPublishing()`, sandbox);
+    assert.equal(calls, 1);
+    assert.equal(sandbox.state.autoRunning, false);
+    assert.equal(badge, status, "security reason must remain visible after stopping");
+  }
 
   assert.equal(
     _private.looksLikeSecurityCheck(captcha.url, captcha.bodyText),

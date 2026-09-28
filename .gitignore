@@ -20,9 +20,12 @@ dist/runtime/
 
 # Build artifacts
 dist/
+dist-himawari/
 build/
 out/
+output/
 release/
+tmp/
 *.exe
 *.msi
 *.asar

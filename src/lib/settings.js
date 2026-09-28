@@ -11,6 +11,10 @@ const IMAGE_ASPECT_RATIOS = new Set([DEFAULT_IMAGE_ASPECT_RATIO, "9:16", "1:1"])
 const DEFAULT_SETTINGS = {
   blogId: "",
   topic: "",
+  productModel: "",
+  productSiteUrl: "https://himawari.co.kr/",
+  productDetailUrl: "",
+  referenceUrls: "",
   keyword: "",
   category: "",
   codexCmdPath: "codex.cmd",

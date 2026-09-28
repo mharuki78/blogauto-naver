@@ -674,6 +674,14 @@ assertCondition(
   "src/lib/search.js: generic support/search-help pages must be filtered before content extraction"
 );
 assertCondition(
+  searchPrivate.isLowValueResult?.("어학사전 새 창 열림", "https://dict.naver.com/dict.search?query=%ED%9E%88%EB%A7%88%EC%99%80%EB%A6%AC") === true
+    && searchPrivate.isLowValueResult?.("지도 새 창 열림", "https://map.naver.com/v5/search/%ED%9E%88%EB%A7%88%EC%99%80%EB%A6%AC") === true
+    && searchPrivate.isLowValueResult?.("지식iN에 질문하기", "https://kin.naver.com/qna/questionForSearch.naver?title=%ED%9E%88%EB%A7%88%EC%99%80%EB%A6%AC") === true
+    && searchPrivate.isLowValueResult?.("히마와리 크로스백 후기", "https://blog.naver.com/himawari_korea/224303656085") === false
+    && searchPrivate.buildDiscoveryQuery?.({ topic: "강아지와 산책할때 좋은 가방", keyword: "히마와리Himawari" }) === "히마와리 가방",
+  "src/lib/search.js: reject the observed Naver navigation links and retry the failed job with a compact discovery query"
+);
+assertCondition(
   searchPrivate.isUnsupportedContentUrl?.("https://example.com/report.xlsx") === true
     && searchPrivate.isLowValueResult?.("PDF", "https://example.com/file.pdf") === true,
   "src/lib/search.js: non-HTML document URLs must be filtered before content extraction"
@@ -1044,10 +1052,59 @@ if (searchTopicSelector && !searchTopicSelector.content.includes("researchResult
 }
 
 const generationOptions = extractBlockAfter(sourceFiles.main, "codexResult = await runCodexGeneration(", "main runCodexGeneration options");
-if (generationOptions && !generationOptions.content.includes("searchResults: []")) {
+if (generationOptions && !generationOptions.content.includes("...referenceSources")) {
   failed = true;
-  console.error("src/main.js: initial runCodexGeneration options must pass searchResults: []");
+  console.error("src/main.js: initial runCodexGeneration options must pass fetched user reference sources");
 }
+
+const practicalResearchRevision = {
+  status: "REVISION",
+  searchNeed: "normal",
+  finalTitle: "강아지 산책용 Himawari 0424, 간식·물통 챙길 때 살펴볼 점",
+  failureReason: "0424의 정확한 포켓 구성과 실측 크기를 확인할 상품 상세 근거가 부족하다.",
+  mustCover: ["간식·물통·배변봉투에 맞춘 수납 판단", "정확한 실측 치수 확인"],
+  writerContract: { mustNotDo: ["0423의 사양을 0424에 적용하지 않는다."] }
+};
+const practicalSource = {
+  title: "[Himawari] Pet Bag No. 0424",
+  url: "https://blog.naver.com/himawari_korea/224284993796",
+  excerpt: "히마와리 No.0424를 강아지 산책용 가방으로 소개하며 간식과 물통을 넣고 다닌다는 게시물입니다. ".repeat(3),
+  relevance: { score: 30, topicMatchedTerms: ["강아지", "himawari", "0424"] }
+};
+const practicalFallback = codexRunnerPrivate.buildPracticalDraftFallback?.(practicalResearchRevision, {
+  topicMode: "manual",
+  topic: "강아지 산책에 어울리는 Himawari 0424",
+  category: "패션",
+  sourceQuality: { status: "usable" },
+  searchResults: [practicalSource]
+});
+assertCondition(
+  practicalFallback?.status === "PASS"
+    && practicalFallback?.bestEffortDraft === true
+    && practicalFallback?.writerContract?.mustCover?.length === 1
+    && practicalFallback?.writerContract?.mustNotDo?.some((item) => item.includes("0423"))
+    && codexRunnerPrivate.buildPracticalDraftFallback?.(
+      practicalResearchRevision,
+      { topicMode: "manual", topic: "강아지 산책에 어울리는 Himawari 0424", sourceQuality: { status: "usable" }, searchResults: [{ ...practicalSource, title: "No.0423", excerpt: "No.0423 제품입니다. ".repeat(20) }] }
+    ) === null
+    && codexRunnerPrivate.buildPracticalDraftFallback?.(
+      { ...practicalResearchRevision, searchNeed: "strict" },
+      { topicMode: "manual", topic: "강아지 산책에 어울리는 Himawari 0424", sourceQuality: { status: "usable" }, searchResults: [practicalSource] }
+    ) === null
+    && codexRunnerPrivate.buildPracticalDraftFallback?.(
+      practicalResearchRevision,
+      { topicMode: "manual", topic: "Himawari 0424 리콜과 안전사고", sourceQuality: { status: "usable" }, searchResults: [practicalSource] }
+    ) === null,
+  "Practical draft fallback must use directly relevant lifestyle evidence without transferring another model's specifications or bypassing strict research"
+);
+assertCondition(
+  sourceFiles.rendererIndex.content.includes('id="referenceUrls"')
+    && sourceFiles.rendererApp.content.includes('referenceUrls: $("#referenceUrls").value.trim()')
+    && sourceFiles.rendererApp.content.includes('referenceUrls: "#referenceUrls"')
+    && sourceFiles.settings.content.includes('referenceUrls: ""')
+    && sourceFiles.main.content.includes('referenceUrls: referenceUrls.join("\\n")'),
+  "Reference URL input must persist from the renderer through settings into each job"
+);
 if (generationOptions && !generationOptions.content.includes("onSearchNeeded: async")) {
   failed = true;
   console.error("src/main.js: runCodexGeneration options must include onSearchNeeded");
@@ -1457,7 +1514,7 @@ if (codexGeneration && !codexGeneration.content.includes("main-review-result.jso
   failed = true;
   console.error("src/lib/codexRunner.js: Main Agent final review must write a dedicated review result");
 }
-if (codexGeneration && !codexGeneration.content.includes("(mainReviewStatus === \"REVISION\" || mainReviewPassIssue) && attempt < maxReviewAttempts")) {
+if (codexGeneration && !codexGeneration.content.includes("(mainReviewStatus === \"REVISION\" || mainReviewPassIssue || practicalReviewNeedsRepair) && attempt < maxReviewAttempts")) {
   failed = true;
   console.error("src/lib/codexRunner.js: REVISION Main Agent review must retry before blocking publishing");
 }
@@ -1925,17 +1982,9 @@ if (postWriteWait) {
   }
 }
 const articleInsert = extractFunctionBlock(sourceFiles.naverPublisher, "async function insertArticleWithImages", "insertArticleWithImages function");
-if (articleInsert && !articleInsert.content.includes("const bodyTypingLog = () => {};")) {
-  failed = true;
-  console.error("src/lib/naverPublisher.js: sentence-level body typing logs must be suppressed during publishing");
-}
 if (articleInsert && (!articleInsert.content.includes("본문 글쓰기 시작") || !articleInsert.content.includes("본문 글쓰기 완료"))) {
   failed = true;
   console.error("src/lib/naverPublisher.js: body publishing should log one start and one completion message");
-}
-if (articleInsert && !articleInsert.content.includes("typeBodyParagraph(page, block.text, options, bodyTypingLog)")) {
-  failed = true;
-  console.error("src/lib/naverPublisher.js: paragraph typing must use the quiet bodyTypingLog during publishing");
 }
 const postwriteUrlHelper = extractFunctionBlock(sourceFiles.naverPublisher, "function looksLikePostWriteUrl", "looksLikePostWriteUrl function");
 if (postwriteUrlHelper && !postwriteUrlHelper.content.includes("new URL")) {
@@ -2212,6 +2261,46 @@ if (captchaSessionCheck.status !== 0) {
   process.stderr.write(captchaSessionCheck.stderr || captchaSessionCheck.stdout);
 } else {
   process.stdout.write(captchaSessionCheck.stdout);
+}
+const referenceSourceCheck = spawnSync(process.execPath, [path.join(root, "scripts", "check-reference-sources.js")], {
+  cwd: root,
+  encoding: "utf8"
+});
+if (referenceSourceCheck.status !== 0) {
+  failed = true;
+  process.stderr.write(referenceSourceCheck.stderr || referenceSourceCheck.stdout);
+} else {
+  process.stdout.write(referenceSourceCheck.stdout);
+}
+const practicalCompletionCheck = spawnSync(process.execPath, [path.join(root, "scripts", "check-practical-completion.js")], {
+  cwd: root,
+  encoding: "utf8"
+});
+if (practicalCompletionCheck.status !== 0) {
+  failed = true;
+  process.stderr.write(practicalCompletionCheck.stderr || practicalCompletionCheck.stdout);
+} else {
+  process.stdout.write(practicalCompletionCheck.stdout);
+}
+const bodyReferenceCheck = spawnSync(process.execPath, [path.join(root, "scripts", "check-body-reference.js")], {
+  cwd: root,
+  encoding: "utf8"
+});
+if (bodyReferenceCheck.status !== 0) {
+  failed = true;
+  process.stderr.write(bodyReferenceCheck.stderr || bodyReferenceCheck.stdout);
+} else {
+  process.stdout.write(bodyReferenceCheck.stdout);
+}
+const productReferenceCheck = spawnSync(process.execPath, [path.join(root, "scripts", "check-product-reference.js")], {
+  cwd: root,
+  encoding: "utf8"
+});
+if (productReferenceCheck.status !== 0) {
+  failed = true;
+  process.stderr.write(productReferenceCheck.stderr || productReferenceCheck.stdout);
+} else {
+  process.stdout.write(productReferenceCheck.stdout);
 }
 const prepareBodyAfterTitleImage = extractFunctionBlock(
   sourceFiles.naverPublisher,

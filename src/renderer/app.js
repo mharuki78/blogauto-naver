@@ -137,6 +137,8 @@ function setRunState(status, detail = "") {
     codex_usage_limit: "danger",
     codex_exec_failed: "danger",
     session_expired: "danger",
+    naver_protected: "danger",
+    naver_verification_required: "warning",
     duplicate_retry: "warning",
     publishing: "info",
     generating: "info"
@@ -148,6 +150,8 @@ function setRunState(status, detail = "") {
     codex_usage_limit: "한도초과",
     codex_exec_failed: "Codex실패",
     session_expired: "세션만료",
+    naver_protected: "보호조치",
+    naver_verification_required: "인증 필요",
     duplicate_retry: "중복",
     publishing: "발행",
     generating: "생성중"
@@ -180,7 +184,7 @@ function addLog(payload) {
 
 function shouldRetryAutoResult(result) {
   const status = String(result?.status || "").toLowerCase();
-  if (["success", "generated", "codex_usage_limit", "codex_exec_failed", "session_expired"].includes(status)) {
+  if (["success", "generated", "codex_usage_limit", "codex_exec_failed", "session_expired", "naver_protected", "naver_verification_required"].includes(status)) {
     return false;
   }
   if (status === "duplicate_retry") return true;
@@ -294,6 +298,8 @@ function statusBadge(status) {
     codex_usage_limit: "danger",
     codex_exec_failed: "danger",
     session_expired: "danger",
+    naver_protected: "danger",
+    naver_verification_required: "warning",
     duplicate_retry: "warning",
     publishing: "info",
     generating: "info"
@@ -305,6 +311,8 @@ function statusBadge(status) {
     codex_usage_limit: "한도초과",
     codex_exec_failed: "Codex실패",
     session_expired: "세션만료",
+    naver_protected: "보호조치",
+    naver_verification_required: "인증 필요",
     duplicate_retry: "중복",
     publishing: "발행",
     generating: "생성중"
@@ -1264,6 +1272,10 @@ function collectForm(target = {}) {
     topicMode: $("#topicMode").value,
     repeatTermMinutes: Number($("#repeatTermMinutes").value || 60),
     topic: $("#topic").value.trim(),
+    productModel: $("#productModel").value.trim(),
+    productSiteUrl: $("#productSiteUrl").value.trim(),
+    productDetailUrl: $("#productDetailUrl").value.trim(),
+    referenceUrls: $("#referenceUrls").value.trim(),
     category: category?.name || "",
     keyword: category?.keyword || "",
     excludedTopics: category?.excludedTopics || "",
@@ -1297,9 +1309,44 @@ function collectForm(target = {}) {
   };
 }
 
+function validateReferenceUrlsInput(value) {
+  const urls = String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  if (urls.length > 5) throw new Error("참고 URL은 최대 5개까지 입력할 수 있습니다.");
+  for (const value of urls) {
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error(`참고 URL 형식이 올바르지 않습니다: ${value.slice(0, 100)}`);
+    }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+      throw new Error("참고 URL은 아이디·비밀번호가 없는 http 또는 https 주소여야 합니다.");
+    }
+  }
+}
+
+function validateProductReferenceInput(form) {
+  if (!String(form.productModel || "").trim()) throw new Error("마지막에 소개할 자사 제품 모델명을 입력해 주세요.");
+  if (!/^(?:No\.?\s*)?[A-Za-z0-9][A-Za-z0-9-]{1,29}$/i.test(form.productModel)) {
+    throw new Error("제품 모델명은 영문·숫자·하이픈으로 입력해 주세요. 예: 0424");
+  }
+  for (const [label, value] of [["제품 참고 사이트", form.productSiteUrl], ["제품 상세 URL", form.productDetailUrl]]) {
+    if (!value && label === "제품 상세 URL") continue;
+    let url;
+    try { url = new URL(value); } catch { throw new Error(`${label} 주소가 올바르지 않습니다.`); }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+      throw new Error(`${label}은 아이디·비밀번호가 없는 http 또는 https 주소여야 합니다.`);
+    }
+  }
+}
+
 function applySettings(settings) {
   const map = {
     topic: "#topic",
+    productModel: "#productModel",
+    productSiteUrl: "#productSiteUrl",
+    productDetailUrl: "#productDetailUrl",
+    referenceUrls: "#referenceUrls",
     topicMode: "#topicMode",
     repeatTermMinutes: "#repeatTermMinutes",
     tistoryBlogId: "#tistoryBlogId",
@@ -1332,6 +1379,10 @@ async function saveSettingsNow() {
   await window.blogAuto.saveSettings({
     blogId: form.blogId,
     topic: form.topic,
+    productModel: form.productModel,
+    productSiteUrl: form.productSiteUrl,
+    productDetailUrl: form.productDetailUrl,
+    referenceUrls: form.referenceUrls,
     keyword: form.keyword,
     category: form.category,
     primarySearchProvider: form.primarySearchProvider,
@@ -1501,6 +1552,8 @@ async function startAutoPublishing(startTargetKey = "") {
     throw new Error("All selected Naver sessions are expired. Check at least one Naver session before starting auto publishing.");
   }
   const startupForm = collectForm();
+  validateReferenceUrlsInput(startupForm.referenceUrls);
+  validateProductReferenceInput(startupForm);
   if (startupForm.publishToTistoryAfterNaver && !startupForm.tistoryBlogId) throw new Error("티스토리 블로그 ID가 필요합니다.");
   state.running = true;
   state.autoRunning = true;
@@ -1511,6 +1564,7 @@ async function startAutoPublishing(startTargetKey = "") {
   await saveSettingsNow();
   setTokenTotal(0);
 
+  let stoppedForNaverSecurity = false;
   let index = startTargetKey ? findAutoTargetIndex(getAutoTargets(), startTargetKey) : 0;
   autoLoop:
   while (state.autoRunning) {
@@ -1583,6 +1637,13 @@ async function startAutoPublishing(startTargetKey = "") {
         excludedKeywordLanes: [...excludedKeywordLanes],
         failOnLoginRequired: true
       }));
+      if (["naver_protected", "naver_verification_required"].includes(result?.status)) {
+        addLog({ level: "warn", message: autoResultReason(result), at: new Date().toISOString() });
+        state.autoRunning = false;
+        stoppedForNaverSecurity = true;
+        setRunState(result.status);
+        break autoLoop;
+      }
       if (result?.status === "codex_usage_limit") {
         addLog({
           level: "error",
@@ -1677,11 +1738,13 @@ async function startAutoPublishing(startTargetKey = "") {
   $("#startButton").disabled = false;
   setTistoryTestButtonDisabled(false);
   $("#stopAutoButton").disabled = true;
-  setRunState("generated", "자동 중지");
+  if (!stoppedForNaverSecurity) setRunState("generated", "자동 중지");
 }
 
 async function startManualJob() {
   const form = collectForm();
+  validateReferenceUrlsInput(form.referenceUrls);
+  validateProductReferenceInput(form);
   if (form.publishAfterGenerate && form.publishToTistoryAfterNaver && !form.tistoryBlogId) throw new Error("티스토리 블로그 ID가 필요합니다.");
   if (!form.topic) throw new Error("수동 방식에서는 주제가 필요합니다.");
   if (!form.category) throw new Error("선택 계정에서 카테고리를 체크하세요.");

@@ -1,8 +1,8 @@
-# Bolg Automator 직원용 실행 안내
+# Himawari Blog Automator 직원용 실행 안내
 
 ## 설치와 실행
 
-1. `Bolg-Automator-Made-by-Hyunjin-0.1.0.exe`를 직원 PC의 쓰기 가능한 폴더에 저장하고 실행합니다. Windows x64용 포터블 실행 파일이며 설치 프로그램은 아닙니다.
+1. `Himawari-Blog-Automator-Made-by-Hyunjin-0.1.0.exe`를 직원 PC의 쓰기 가능한 폴더에 저장하고 실행합니다. Windows x64용 포터블 실행 파일이며 설치 프로그램은 아닙니다.
 2. Google Chrome을 설치합니다. Naver와 Tistory 로그인 및 발행에 사용합니다.
 3. Codex CLI를 설치합니다. Node.js가 설치된 PC라면 PowerShell에서 `npm install -g @openai/codex`를 실행할 수 있습니다. [공식 Codex CLI 안내](https://learn.chatgpt.com/docs/codex/cli)를 참고하세요.
 4. 앱 상단의 **ChatGPT 연결**을 누릅니다. 계정 소유자가 직원 PC에서 직접 자신의 ChatGPT 계정으로 로그인합니다. 앱에 **ChatGPT 연결됨**이 표시되는지 확인합니다. 필요하면 PowerShell에서 `codex login status`로도 확인할 수 있습니다.

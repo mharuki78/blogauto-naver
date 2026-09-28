@@ -32,7 +32,7 @@ fs.copyFileSync(
   path.join(root, "EMPLOYEE_SETUP.md"),
   path.join(root, "dist", "EMPLOYEE_SETUP.md")
 );
-const executableName = `Bolg-Automator-Made-by-Hyunjin-${version}.exe`;
+const executableName = `Himawari-Blog-Automator-Made-by-Hyunjin-${version}.exe`;
 const executablePath = path.join(root, "dist", executableName);
 if (fs.existsSync(executablePath)) {
   const sha256 = crypto.createHash("sha256").update(fs.readFileSync(executablePath)).digest("hex");

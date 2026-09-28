@@ -421,7 +421,8 @@ function normalizeAgentResult({
       bodyImages.push({
         sequence,
         path: copied,
-        prompt: String(item.prompt || "")
+        prompt: String(item.prompt || ""),
+        isReferenceOriginal: item.isReferenceOriginal === true
       });
     }
   }
@@ -468,6 +469,7 @@ function normalizeAgentResult({
     tags: Array.isArray(result.tags) ? result.tags : [],
     bodyImages,
     titleImagePath,
+    titleIsReferenceOriginal: result.titleIsReferenceOriginal === true,
     notes: [
       ...resultNotes.filter((note) => {
         if (!imagesRequested && /이미지|image/i.test(String(note || ""))) {
