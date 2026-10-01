@@ -2833,7 +2833,7 @@ async function checkNaverSession(options) {
   let shouldCloseContext = true;
   let chromium;
   try {
-    ({ chromium } = require("playwright-core"));
+    chromium = options.chromium || require("playwright-core").chromium;
   } catch {
     throw new Error("playwright-core가 설치되어 있지 않아 Naver 세션을 확인할 수 없습니다.");
   }
@@ -2848,8 +2848,24 @@ async function checkNaverSession(options) {
     viewport: { width: 1280, height: 820 }
   }));
 
+  let page;
+  const withOpenSession = (result) => {
+    if (options.keepOpen !== true || !context.pages().some((item) => !item.isClosed())) return result;
+    page = result.page || activePage(context, page);
+    shouldCloseContext = false;
+    return {
+      ...result,
+      preparedSession: {
+        context,
+        page,
+        browserProfileDir,
+        postWriteUrl: postWriteUrlFor(options)
+      }
+    };
+  };
+
   try {
-    let page = context.pages()[0] || await context.newPage();
+    page = context.pages()[0] || await context.newPage();
     const selectors = {
       idInput: "#id",
       passwordInput: "#pw",
@@ -2861,22 +2877,6 @@ async function checkNaverSession(options) {
     await gotoResilient(page, targetUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
     page = activePage(context, page);
     await sleep(1200);
-    const keepValidSessionOpen = options.keepOpen === true;
-    const withOpenSession = (result) => {
-      if (keepValidSessionOpen && result.status === "valid") {
-        shouldCloseContext = false;
-        return {
-          ...result,
-          preparedSession: {
-            context,
-            page,
-            browserProfileDir,
-            postWriteUrl: targetUrl
-          }
-        };
-      }
-      return result;
-    };
     const verifyTarget = async () => {
       const result = options.requireEditor === true
         ? await verifyPostWriteEditorSession(context, page, selectors, options, targetUrl, log)
@@ -2891,7 +2891,7 @@ async function checkNaverSession(options) {
       const stateAfterSecurityCheck = await waitForSecurityCheckComplete(page, selectors, log, options);
       if (stateAfterSecurityCheck.state === "login_required") {
         if (!options.interactiveLogin) {
-          return { status: "expired", reason: "login_required" };
+          return withOpenSession({ status: "expired", reason: "login_required", page });
         }
         await completeLoginIfNeeded(page, selectors, options, log);
       }
@@ -2904,10 +2904,14 @@ async function checkNaverSession(options) {
         const result = await verifyTarget();
         return withOpenSession(result);
       }
-      return { status: "expired", reason: "login_required" };
+      return withOpenSession({ status: "expired", reason: "login_required", page });
     }
     const result = await verifyTarget();
     return withOpenSession(result);
+  } catch (error) {
+    if (options.keepOpen !== true || !context.pages().some((item) => !item.isClosed())) throw error;
+    const status = ["SESSION_EXPIRED", "NAVER_ACCOUNT_PROTECTED"].includes(error.code) ? "expired" : "unknown";
+    return withOpenSession({ status, reason: error.message, errorCode: error.code || "", page: activePage(context, page) });
   } finally {
     if (shouldCloseContext) {
       await context.close();

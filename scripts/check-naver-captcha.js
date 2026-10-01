@@ -4,7 +4,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..");
-const { _private, naverSessionFailureStatus } = require(path.join(root, "src", "lib", "naverPublisher.js"));
+const { _private, checkNaverSession, naverSessionFailureStatus } = require(path.join(root, "src", "lib", "naverPublisher.js"));
 
 function createLoginStatePage(states) {
   let index = 0;
@@ -233,6 +233,57 @@ async function run() {
     (error) => error && error.code === "SECURITY_CHECK_TIMEOUT",
     "an unsolved CAPTCHA must time out without being mislabeled as session expiration"
   );
+
+  const profileRoot = path.join(root, "tmp", "naver-login-window-test");
+  const fakeBrowser = (page) => {
+    let closeCount = 0;
+    const context = {
+      pages: () => [page],
+      close: async () => { closeCount += 1; }
+    };
+    return {
+      context,
+      get closeCount() { return closeCount; },
+      chromium: { launchPersistentContext: async () => context }
+    };
+  };
+  const pendingLogin = fakeBrowser(createLoginStatePage([login]));
+  const pendingResult = await checkNaverSession({
+    blogId: "test-blog",
+    browserProfileDir: path.join(profileRoot, "pending"),
+    chromium: pendingLogin.chromium,
+    interactiveLogin: false,
+    keepOpen: true
+  });
+  assert.equal(pendingResult.status, "expired");
+  assert.equal(pendingLogin.closeCount, 0, "a pending login must leave Chrome visible for retry");
+  assert.equal(pendingResult.preparedSession.context, pendingLogin.context);
+  await pendingResult.preparedSession.context.close();
+
+  const closedLogin = fakeBrowser(createLoginStatePage([login]));
+  await checkNaverSession({
+    blogId: "test-blog",
+    browserProfileDir: path.join(profileRoot, "closed"),
+    chromium: closedLogin.chromium,
+    interactiveLogin: false,
+    keepOpen: false
+  });
+  assert.equal(closedLogin.closeCount, 1, "ordinary checks must still close Chrome");
+
+  const failedPage = createLoginStatePage([login]);
+  failedPage.goto = async () => { throw new Error("test navigation failure"); };
+  const failedBrowser = fakeBrowser(failedPage);
+  const failedResult = await checkNaverSession({
+    blogId: "test-blog",
+    browserProfileDir: path.join(profileRoot, "failed"),
+    chromium: failedBrowser.chromium,
+    interactiveLogin: true,
+    keepOpen: true
+  });
+  assert.equal(failedResult.status, "unknown");
+  assert.match(failedResult.reason, /test navigation failure/);
+  assert.equal(failedBrowser.closeCount, 0, "navigation errors must leave the login window visible");
+  await failedResult.preparedSession.context.close();
 
   console.log("Naver CAPTCHA session transition checks passed.");
 }

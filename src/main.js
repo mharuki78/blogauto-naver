@@ -2257,12 +2257,14 @@ app.whenReady().then(() => {
         : "unknown";
     const saved = updateAccountSession(runtimeRoot, account.id, sessionStatus, settings);
     emit("accounts:update", saved);
-    if (result.status !== "valid") {
-      safeLog("session", `${account.label || account.blogId || account.naverId} 계정 세션이 만료 상태입니다.`, "warn");
-      return publicResult;
-    }
     if (preparedSession) {
       activeNaverSessions.set(key, preparedSession);
+    }
+    if (result.status !== "valid") {
+      safeLog("session", result.reason && result.reason !== "login_required"
+        ? `네이버 세션 확인 실패: ${result.reason}`
+        : `${account.label || account.blogId || account.naverId} 계정 로그인이 필요합니다. 열린 크롬 창에서 계속 진행해 주세요.`, "warn");
+      return publicResult;
     }
     safeLog("session", `${account.label || account.blogId || account.naverId} 계정 글쓰기 편집기 확인 완료.`);
     return publicResult;
