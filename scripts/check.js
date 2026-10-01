@@ -1377,9 +1377,36 @@ const visibleModels = parseAvailableModels({ models: [
 ] });
 if (visibleModels.map((model) => model.id).join(",") !== "gpt-6-astra,gpt-6-sol"
   || !getAvailableCodexModels().length
-  || normalizeCodexModel("gpt-6-sol") !== "gpt-6-sol") {
+  || normalizeCodexModel("gpt-6-sol") !== "gpt-6-sol"
+  || normalizeCodexModel("gpt-6.1-sol") !== "gpt-6.1-sol"
+  || getAvailableCodexModels()[0]?.id !== "gpt-6.1-sol") {
   failed = true;
-  console.error("Codex model list must include current visible models, exclude hidden models, and accept GPT-6 Sol");
+  console.error("Codex model list must include GPT-6.1 Sol even when the local cache is stale, exclude hidden cache models, and preserve selectable IDs");
+}
+const staleModelsHome = fs.mkdtempSync(path.join(os.tmpdir(), "blogauto-stale-models-"));
+const previousCodexHome = process.env.CODEX_HOME;
+const staleModelsPath = path.join(staleModelsHome, "models_cache.json");
+let staleModelIds;
+let selectedStaleModel;
+try {
+  fs.writeFileSync(staleModelsPath, JSON.stringify({ models: [
+    { slug: "gpt-6-sol", display_name: "GPT-6 Sol", visibility: "list", supported_in_api: true, priority: 1 },
+    { slug: "hidden-test", display_name: "Hidden", visibility: "hide", supported_in_api: true, priority: 2 },
+    { slug: "future-test", display_name: "Future", visibility: "list", supported_in_api: true, priority: 3 }
+  ] }));
+  process.env.CODEX_HOME = staleModelsHome;
+  staleModelIds = getAvailableCodexModels().map((model) => model.id);
+  selectedStaleModel = normalizeCodexModel("gpt-6.1-sol");
+} finally {
+  if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+  else process.env.CODEX_HOME = previousCodexHome;
+  fs.unlinkSync(staleModelsPath);
+  fs.rmdirSync(staleModelsHome);
+}
+if (staleModelIds[0] !== "gpt-6.1-sol" || !staleModelIds.includes("future-test")
+  || staleModelIds.includes("hidden-test") || selectedStaleModel !== "gpt-6.1-sol") {
+  failed = true;
+  console.error("A stale Codex cache must still offer GPT-6.1 Sol while retaining other visible cached models");
 }
 const { normalizeReferenceImages } = require("../src/lib/accountStore");
 const legacyReferences = normalizeReferenceImages({ sampleImagePath: "C:/legacy/sample.png", sampleImageHash: "legacy-hash" });

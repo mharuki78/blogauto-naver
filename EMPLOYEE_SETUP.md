@@ -2,11 +2,13 @@
 
 ## 설치와 실행
 
-1. `Himawari-Blog-Automator-Made-by-Hyunjin-0.1.1.exe`를 직원 PC의 쓰기 가능한 폴더에 저장하고 실행합니다. Windows x64용 포터블 실행 파일이며 설치 프로그램은 아닙니다.
+1. `Himawari-Blog-Automator-Made-by-Hyunjin-0.1.2.exe`를 직원 PC의 쓰기 가능한 폴더에 저장하고 실행합니다. Windows x64용 포터블 실행 파일이며 설치 프로그램은 아닙니다.
 2. Google Chrome을 설치합니다. Naver와 Tistory 로그인 및 발행에 사용합니다.
 3. Codex CLI를 설치합니다. Node.js가 설치된 PC라면 PowerShell에서 `npm install -g @openai/codex`를 실행할 수 있습니다. [공식 Codex CLI 안내](https://learn.chatgpt.com/docs/codex/cli)를 참고하세요.
 4. 앱 상단의 **ChatGPT 연결**을 누릅니다. 계정 소유자가 직원 PC에서 직접 자신의 ChatGPT 계정으로 로그인합니다. 앱에 **ChatGPT 연결됨**이 표시되는지 확인합니다. 필요하면 PowerShell에서 `codex login status`로도 확인할 수 있습니다.
 5. 앱에서 Naver 블로그 계정을 등록하고, 세션 확인 또는 발행 시 열린 Chrome 창에서 Naver에 직접 로그인합니다.
+
+Codex Model에서 `GPT-6.1 Sol`을 선택할 수 있습니다. 선택 후 실행이 모델 지원 오류로 멈추면 직원 PC의 Codex CLI를 업데이트해 주세요.
 
 실행 파일에는 ChatGPT 로그인 정보, API 키, Naver 비밀번호, 기존 브라우저 세션이 들어 있지 않습니다. Codex는 **직원 PC의 Windows 사용자별 로그인 상태**를 사용합니다. 앱은 실행 파일 옆의 `runtime` 폴더에 계정 설정, 작업 기록, 이미지와 브라우저 세션을 저장합니다. 이 폴더는 직원별로 분리하고 타인에게 전달하지 마세요.
 

@@ -3,6 +3,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const FALLBACK_MODELS = [
+  { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
   { id: "gpt-6-astra", label: "GPT-6 Astra" },
   { id: "gpt-6-sol", label: "GPT-6 Sol" },
   { id: "gpt-6-luna", label: "GPT-6 Luna" },
@@ -39,7 +40,14 @@ function parseAvailableModels(cache) {
 function getAvailableCodexModels() {
   try {
     const models = parseAvailableModels(JSON.parse(fs.readFileSync(codexModelsCachePath(), "utf8")));
-    if (models.length) return models;
+    if (models.length) {
+      const cachedById = new Map(models.map((model) => [model.id, model]));
+      const bundledIds = new Set(FALLBACK_MODELS.map((model) => model.id));
+      return [
+        ...FALLBACK_MODELS.map((model) => ({ ...(cachedById.get(model.id) || model) })),
+        ...models.filter((model) => !bundledIds.has(model.id))
+      ];
+    }
   } catch {
     // The bundled list keeps model selection available before Codex creates its cache.
   }

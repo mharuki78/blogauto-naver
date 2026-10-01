@@ -245,14 +245,14 @@ const path = require("node:path");
       throw new Error("Account sample image preview did not render.");
     }
     const availableModelIds = await window.locator("#codexModel option").evaluateAll((options) => options.map((option) => option.value));
-    for (const id of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
+    for (const id of ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
       if (!availableModelIds.includes(id)) throw new Error(`Latest Codex model is missing: ${id}`);
     }
-    await window.locator("#codexModel").selectOption("gpt-6-sol");
+    await window.locator("#codexModel").selectOption("gpt-6.1-sol");
     await window.locator("#saveSettingsButton").click();
     await window.waitForFunction(async () => {
       const initial = await window.blogAuto.getInitialData();
-      return initial.settings?.codexModel === "gpt-6-sol";
+      return initial.settings?.codexModel === "gpt-6.1-sol";
     });
     if (await window.locator("#referenceImagePreview img").count() !== 1) {
       throw new Error("The uploaded image is not shown in the image-generation reference panel.");
@@ -308,6 +308,7 @@ const path = require("node:path");
       }
     }
     await window.evaluate(() => document.querySelector("#toggleCategoryManagerButton")?.click());
+    await window.locator("#productModel").fill("0424");
     const autoRetryCalls = await window.evaluate(async () => {
       if (typeof window.startAutoPublishing !== "function") {
         throw new Error("startAutoPublishing is not available for renderer smoke test.");
