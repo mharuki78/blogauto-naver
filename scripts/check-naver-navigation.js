@@ -9,6 +9,7 @@ const { _private, verifyOpenNaverSession, naverSessionFailureStatus } = require(
 const target = "https://blog.naver.com/test-blog/postwrite";
 const form = "https://blog.naver.com/PostWriteForm.naver?blogId=test-blog";
 const home = "https://blog.naver.com/test-blog";
+const writeRedirect = "https://blog.naver.com/test-blog?Redirect=Write&categoryNo=1";
 const editorHtml = '<textarea placeholder="제목"></textarea><div class="se-main-container">글쓰기</div>';
 const selectors = { titleInput: "textarea[placeholder='제목']" };
 const runtimeRoot = path.resolve(__dirname, "../tmp/naver-navigation-check");
@@ -52,6 +53,100 @@ test("an already open legacy editor for the target blog is reused", async () => 
     assert.equal(result.status, "valid");
     assert.equal(result.url, form);
     assert.equal(visits.length, before, "a ready editor must not be reloaded");
+  } finally { await context.close(); }
+});
+
+test("a legacy editor with a Write redirect query is still reused", async () => {
+  const { context, page, visits } = await fixture(() => ({ body: editorHtml }));
+  try {
+    const legacyWrite = `${form}&Redirect=Write`;
+    await page.goto(legacyWrite);
+    const before = visits.length;
+    const result = await verifyOpenNaverSession({ blogId: "test-blog", context, page, editorCheckTimeout: 2500, runtimeRoot });
+    assert.equal(result.status, "valid");
+    assert.equal(result.url, legacyWrite);
+    assert.equal(visits.length, before, "a ready legacy editor must not be replaced");
+  } finally { await context.close(); }
+});
+
+test("Naver frameset rewriting postwrite to Redirect=Write still confirms its editor", async () => {
+  const { context, page, visits } = await fixture((url) => url === form
+    ? { body: editorHtml }
+    : { body: `<iframe name="mainFrame" style="width:100%;height:500px" src="${form}"></iframe>
+      <script>setTimeout(() => history.replaceState('', '', '/test-blog?Redirect=Write&categoryNo=1'), 100)</script>` });
+  try {
+    await page.goto(target);
+    await page.waitForURL(writeRedirect);
+    const before = visits.length;
+    const result = await verifyOpenNaverSession({ blogId: "test-blog", context, page, editorCheckTimeout: 2500, runtimeRoot });
+    assert.equal(result.status, "valid");
+    assert.equal(result.url, writeRedirect);
+    assert.equal(visits.length, before, "the loaded Naver frame must not be reloaded");
+  } finally { await context.close(); }
+});
+
+test("a write Redirect for another blog cannot authorize the target editor", async () => {
+  assert.equal(_private.matchesTargetPostWriteUrl("https://blog.naver.com/another-blog?Redirect=Write", target), false);
+  assert.equal(_private.matchesTargetPostWriteUrl("https://blog.naver.com/test-blog?Redirect=Update&logNo=123", target), false);
+  assert.equal(_private.matchesTargetPostWriteUrl("https://blog.naver.com/test-blog?Redirect=Write&Redirect=Update", target), false);
+});
+
+test("a target frameset never accepts a different blog's editor iframe", async () => {
+  const other = "https://blog.naver.com/PostWriteForm.naver?blogId=another-blog";
+  const { context, page, visits } = await fixture((url) => url === other
+    ? { body: editorHtml }
+    : { body: `<iframe style="width:100%;height:500px" src="${other}"></iframe>` });
+  try {
+    await page.goto(writeRedirect);
+    const before = visits.length;
+    await assert.rejects(() => verifyOpenNaverSession({ blogId: "test-blog", context, page, editorCheckTimeout: 1500, runtimeRoot }));
+    assert.equal(visits.length, before);
+  } finally { await context.close(); }
+});
+
+test("a Redirect=Write editor is not mistaken for completed publishing", async () => {
+  const { context, page } = await fixture(() => ({ body: editorHtml }));
+  try {
+    await page.goto(writeRedirect);
+    await assert.rejects(() => _private.waitForPublishCompletion(page, { finalPublishButton: "#publish" }, () => {}, 250),
+      /발행 완료 상태를 확인하지 못했습니다/);
+  } finally { await context.close(); }
+});
+
+test("draft save notices and article text cannot confirm publishing on a Write screen", async () => {
+  const { context, page } = await fixture(() => ({ body: `${editorHtml}<p>임시글이 저장되었습니다. 발행되었습니다라는 안내가 표시되면 확인합니다.</p>` }));
+  try {
+    await page.goto(writeRedirect);
+    await assert.rejects(() => _private.waitForPublishCompletion(page, { finalPublishButton: "#publish" }, () => {}, 250),
+      /발행 완료 상태를 확인하지 못했습니다/);
+  } finally { await context.close(); }
+});
+
+test("publishing completes when the frameset changes to the published post permalink", async () => {
+  const published = "https://blog.naver.com/test-blog/224123456";
+  const { context, page } = await fixture((url) => url === form ? { body: editorHtml }
+    : url.includes("PostView.naver") ? { body: "<p>게시글 내용</p>" }
+      : { body: `<iframe style="width:100%;height:500px" src="${form}"></iframe>
+        <script>setTimeout(() => {
+          document.querySelector('iframe').src = '/PostView.naver?blogId=test-blog&logNo=224123456';
+          history.replaceState('', '', '/test-blog/224123456');
+        }, 700)</script>` });
+  try {
+    await page.goto(writeRedirect);
+    await _private.waitForPublishCompletion(page, { finalPublishButton: "#publish" }, () => {}, 2500);
+    assert.equal(page.url(), published, "a write frame must not report success before switching to its published post");
+  } finally { await context.close(); }
+});
+
+test("navigation failure logs preserve routing fields without authentication tokens", async () => {
+  const { context, page } = await fixture(() => ({ body: "<p>화면 이동 중</p>" }));
+  const logs = [];
+  try {
+    await page.goto("https://blog.naver.com/test-blog?Redirect=Update&token=private-token");
+    await assert.rejects(() => _private.verifyPostWriteSession(context, page, selectors,
+      { runtimeRoot, editorCheckTimeout: 250 }, target, (message) => logs.push(message)));
+    assert.ok(logs.some((message) => message.includes("Redirect=Update")));
+    assert.ok(logs.every((message) => !message.includes("private-token")));
   } finally { await context.close(); }
 });
 

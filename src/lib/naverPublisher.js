@@ -168,25 +168,14 @@ async function humanClear(page, selector) {
   await page.keyboard.press("Backspace");
 }
 
-async function findVisibleLocator(page, selectors, timeout = 20000) {
+async function findVisibleLocator(page, selectors, timeout = 20000, roots = null) {
   const deadline = Date.now() + timeout;
   const selectorList = Array.isArray(selectors) ? selectors : [selectors];
 
   while (Date.now() < deadline) {
-    for (const selector of selectorList) {
-      const locator = page.locator(selector);
-      const count = await locator.count().catch(() => 0);
-      for (let index = 0; index < count; index += 1) {
-        const item = locator.nth(index);
-        if (await item.isVisible().catch(() => false)) {
-          return item;
-        }
-      }
-    }
-
-    for (const frame of page.frames()) {
+    for (const root of roots || [page, ...page.frames()]) {
       for (const selector of selectorList) {
-        const locator = frame.locator(selector);
+        const locator = root.locator(selector);
         const count = await locator.count().catch(() => 0);
         for (let index = 0; index < count; index += 1) {
           const item = locator.nth(index);
@@ -203,24 +192,13 @@ async function findVisibleLocator(page, selectors, timeout = 20000) {
   throw new Error(`입력 영역을 찾을 수 없습니다: ${selectorList.join(", ")}`);
 }
 
-async function collectVisibleLocators(page, selectors) {
+async function collectVisibleLocators(page, selectors, roots = null) {
   const selectorList = Array.isArray(selectors) ? selectors : [selectors];
   const items = [];
 
-  for (const selector of selectorList.filter(Boolean)) {
-    const locator = page.locator(selector);
-    const count = await locator.count().catch(() => 0);
-    for (let index = 0; index < count; index += 1) {
-      const item = locator.nth(index);
-      if (await item.isVisible().catch(() => false)) {
-        items.push(item);
-      }
-    }
-  }
-
-  for (const frame of page.frames()) {
+  for (const root of roots || [page, ...page.frames()]) {
     for (const selector of selectorList.filter(Boolean)) {
-      const locator = frame.locator(selector);
+      const locator = root.locator(selector);
       const count = await locator.count().catch(() => 0);
       for (let index = 0; index < count; index += 1) {
         const item = locator.nth(index);
@@ -1152,7 +1130,7 @@ async function isEditableSurfaceCandidate(locator) {
   }).catch(() => false);
 }
 
-async function findFallbackTitleLocator(page) {
+async function findFallbackTitleLocator(page, roots = null) {
   const candidates = await collectVisibleLocators(page, [
     ".se-title-text .se-text-paragraph",
     ".se-title-text p",
@@ -1161,7 +1139,7 @@ async function findFallbackTitleLocator(page) {
     "[contenteditable='true']",
     "textarea",
     "input[type='text']"
-  ]);
+  ], roots);
   const usable = [];
   for (const item of candidates) {
     if (!await isEditableSurfaceCandidate(item)) continue;
@@ -1256,12 +1234,18 @@ function normalizePostWriteUrl(url) {
     const parsed = new URL(String(url || ""));
     if (parsed.hostname !== "blog.naver.com" || !["http:", "https:"].includes(parsed.protocol)) return "";
     const pathMatch = /^\/([^/]+)\/postwrite\/?$/i.exec(parsed.pathname);
-    const formRoute = /^\/PostWriteForm\.naver\/?$/i.test(parsed.pathname);
+    const formRoute = /^\/PostWriteForm\.(?:naver|nhn)\/?$/i.test(parsed.pathname);
     const blogParams = [...parsed.searchParams].filter(([key]) => key.toLowerCase() === "blogid");
+    const redirects = [...parsed.searchParams].filter(([key]) => key.toLowerCase() === "redirect");
+    const writeRedirect = !formRoute && redirects.length === 1 && redirects[0][1].toLowerCase() === "write"
+      ? /^\/([^/]+)\/?$/.exec(parsed.pathname) : null;
     const blogId = pathMatch
       ? decodeURIComponent(pathMatch[1])
-      : formRoute && blogParams.length === 1 ? blogParams[0][1] : "";
+      : writeRedirect ? decodeURIComponent(writeRedirect[1])
+        : formRoute && blogParams.length === 1 ? blogParams[0][1] : "";
     if (!blogId || /[\s/\\?#]/.test(blogId)) return "";
+    if ((pathMatch || writeRedirect) && (blogParams.length > 1
+      || (blogParams.length === 1 && blogParams[0][1].toLowerCase() !== blogId.toLowerCase()))) return "";
     return `blog.naver.com/${blogId.toLowerCase()}/postwrite`;
   } catch {
     return "";
@@ -1272,7 +1256,11 @@ function normalizeNavigationUrl(url) {
   try {
     const parsed = new URL(url);
     const blogId = parsed.searchParams.get("blogId");
-    return `${parsed.origin}${parsed.pathname}${blogId ? `?blogId=${encodeURIComponent(blogId)}` : ""}`;
+    const redirect = parsed.searchParams.get("Redirect");
+    const query = new URLSearchParams();
+    if (blogId) query.set("blogId", blogId);
+    if (/^(write|update|view)$/i.test(redirect || "")) query.set("Redirect", redirect);
+    return `${parsed.origin}${parsed.pathname}${query.size ? `?${query}` : ""}`;
   } catch {
     return "(화면 이동 중)";
   }
@@ -1378,16 +1366,18 @@ async function waitForPostWriteTitle(page, selectors, options, postWriteUrl, log
       continue;
     }
 
-    let locator = await findVisibleLocator(page, titleSelectors(selectors), 1200).catch(() => null);
+    const editorRoots = [page, ...page.frames()]
+      .filter((root) => matchesTargetPostWriteUrl(root.url(), postWriteUrl));
+    let locator = await findVisibleLocator(page, titleSelectors(selectors), 1200, editorRoots).catch(() => null);
     if (!locator) {
-      locator = await findFallbackTitleLocator(page).catch(() => null);
+      locator = await findFallbackTitleLocator(page, editorRoots).catch(() => null);
     }
     if (locator) {
       log("블로그 글쓰기 편집기를 확인했습니다.");
       return locator;
     }
 
-    const editorSurface = await findVisibleLocator(page, editorReadySelectors(), 800).catch(() => null);
+    const editorSurface = await findVisibleLocator(page, editorReadySelectors(), 800, editorRoots).catch(() => null);
     if (editorSurface && !editorLogged) {
       log("블로그 글쓰기 편집기 표면은 보이지만 제목 입력 영역을 찾는 중입니다.", "warn");
       editorLogged = true;
@@ -2186,12 +2176,18 @@ async function inputTags(page, selector, tags, log) {
   log(`태그 ${cleanTags.length}개 입력 완료`);
 }
 
-function looksLikePublishComplete(url, bodyText) {
-  const text = String(bodyText || "");
-  if (/발행되었습니다|게시되었습니다|등록되었습니다|저장되었습니다|완료되었습니다|발행\s*완료|게시\s*완료/i.test(text)) {
-    return true;
+function looksLikePublishComplete(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "blog.naver.com" || !["http:", "https:"].includes(parsed.protocol)) return false;
+    if (looksLikePostWriteUrl(url)) return false;
+    if (/^\/[^/]+\/\d+\/?$/.test(parsed.pathname)) return true;
+    const logNo = parsed.searchParams.get("logNo") || "";
+    return /^\d+$/.test(logNo) && (/^\/PostView\.(?:naver|nhn)$/i.test(parsed.pathname)
+      || parsed.searchParams.get("Redirect")?.toLowerCase() === "view");
+  } catch {
+    return false;
   }
-  return /blog\.naver\.com/i.test(url) && !/postwrite/i.test(url) && /PostView|Redirect|postView/i.test(url);
 }
 
 async function waitForPublishCompletion(page, selectors, log, timeout = 60000, sessionRecoveryOptions = {}) {
@@ -2202,7 +2198,7 @@ async function waitForPublishCompletion(page, selectors, log, timeout = 60000, s
     const url = page.url();
     const bodyText = await readBodyText(page);
     await assertNaverSessionActive(page, selectors, log, "발행 완료 확인", sessionRecoveryOptions);
-    if (looksLikePublishComplete(url, bodyText)) {
+    if (looksLikePublishComplete(url)) {
       log("Naver 발행 완료를 확인했습니다.");
       return;
     }
@@ -2988,6 +2984,7 @@ module.exports = {
     assertNaverSessionActive,
     completeLoginIfNeeded,
     verifyPostWriteSession,
+    waitForPublishCompletion,
     looksLikePostWriteUrl,
     matchesTargetPostWriteUrl
   }
