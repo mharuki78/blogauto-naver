@@ -818,13 +818,21 @@ async function verifyPublishSessionBeforeGeneration({ runtimeRoot, account, blog
   safeLog(jobId, `계정 profile: ${browserProfileDir}`);
   const cached = reusableNaverSession(sessionKey);
   if (cached) {
-    safeLog(jobId, "이미 확인된 글쓰기 편집기 브라우저 세션을 재사용합니다.");
-    return cached;
+    safeLog(jobId, "열린 브라우저에서 로그인 상태와 글쓰기 편집기를 다시 확인합니다.");
   }
 
   let result;
   try {
-    result = await checkNaverSession({
+    result = cached ? await verifyOpenNaverSession({
+      blogId,
+      browserProfileDir,
+      preparedContext: cached.context,
+      preparedPage: cached.page,
+      interactiveLogin: true,
+      domNotes: form.naverEditorDomNotes || "",
+      runtimeRoot,
+      log: (message, level) => safeLog(jobId, message, level)
+    }) : await checkNaverSession({
       blogId,
       browserProfileDir,
       interactiveLogin: true,
@@ -840,6 +848,9 @@ async function verifyPublishSessionBeforeGeneration({ runtimeRoot, account, blog
       emitAccountStore(runtimeRoot);
     }
     throw error;
+  }
+  if (result.preparedSession) {
+    activeNaverSessions.set(sessionKey, result.preparedSession);
   }
   if (result.status !== "valid" || !result.preparedSession) {
     throw createSessionExpiredError("Naver 로그인 세션을 확인하지 못했습니다. 먼저 계정관리에서 세션확인을 완료해 주세요.");
@@ -1123,7 +1134,6 @@ async function startJob(form) {
       if (account.id) {
         updateAccountSession(runtimeRoot, account.id, "expired", settings);
         emitAccountStore(runtimeRoot);
-        await closeNaverSession(sessionKeyFor(account, browserProfileDir));
       }
       safeLog(jobId, error.message, "warn");
       updateStatus(jobId, failedStatus, error.message);

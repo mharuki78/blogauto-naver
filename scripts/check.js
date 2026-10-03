@@ -2013,28 +2013,29 @@ if (articleInsert && (!articleInsert.content.includes("본문 글쓰기 시작")
   failed = true;
   console.error("src/lib/naverPublisher.js: body publishing should log one start and one completion message");
 }
-const postwriteUrlHelper = extractFunctionBlock(sourceFiles.naverPublisher, "function looksLikePostWriteUrl", "looksLikePostWriteUrl function");
-if (postwriteUrlHelper && !postwriteUrlHelper.content.includes("new URL")) {
-  failed = true;
-  console.error("src/lib/naverPublisher.js: looksLikePostWriteUrl must parse URL instead of using loose substring matching");
-}
-if (postwriteUrlHelper && !postwriteUrlHelper.content.includes("parsed.hostname === \"blog.naver.com\"")) {
-  failed = true;
-  console.error("src/lib/naverPublisher.js: looksLikePostWriteUrl must require exact blog.naver.com host");
-}
-if (postwriteUrlHelper && !postwriteUrlHelper.content.includes("parsed.pathname")) {
-  failed = true;
-  console.error("src/lib/naverPublisher.js: looksLikePostWriteUrl must validate pathname");
-}
 const postWriteUrlFor = extractFunctionBlock(sourceFiles.naverPublisher, "function postWriteUrlFor", "postWriteUrlFor function");
 if (postWriteUrlFor && !postWriteUrlFor.content.includes("resolveBlogId(options)")) {
   failed = true;
   console.error("src/lib/naverPublisher.js: postwrite URL must use blogId fallback helper");
 }
-const targetPostwriteHelper = extractFunctionBlock(sourceFiles.naverPublisher, "function matchesTargetPostWriteUrl", "target postwrite URL helper");
-if (targetPostwriteHelper && !targetPostwriteHelper.content.includes("normalizePostWriteUrl(url) === normalizePostWriteUrl(targetUrl)")) {
-  failed = true;
-  console.error("src/lib/naverPublisher.js: target postwrite URL helper must require exact target Blog ID URL");
+const targetPostwriteUrl = "https://blog.naver.com/example-blog/postwrite";
+for (const [url, matches] of [
+  [targetPostwriteUrl, true],
+  ["https://blog.naver.com/EXAMPLE-blog/postwrite/?categoryNo=1", true],
+  ["https://blog.naver.com/PostWriteForm.naver?blogId=example-blog&categoryNo=1", true],
+  ["https://blog.naver.com/PostWriteForm.naver?blogId=another-blog", false],
+  ["https://blog.naver.com/another-blog/postwrite", false],
+  ["https://blog.naver.com/example-blog", false],
+  ["https://blog.naver.com/PostWriteForm.naver", false],
+  ["https://blog.naver.com/PostWriteForm.naver?blogId=example-blog&blogId=another-blog", false],
+  ["https://blog.naver.com.evil.test/example-blog/postwrite", false],
+  ["https://evil.test/?url=https://blog.naver.com/example-blog/postwrite", false],
+  ["javascript:alert(1)", false]
+]) {
+  if (naverPublisherPrivate.matchesTargetPostWriteUrl(url, targetPostwriteUrl) !== matches) {
+    failed = true;
+    console.error(`Naver target editor URL check failed: ${url}`);
+  }
 }
 const chromeLaunchOptions = extractFunctionBlock(sourceFiles.naverPublisher, "function chromeLaunchOptions", "Chrome launch options helper");
 if (chromeLaunchOptions && !chromeLaunchOptions.content.includes("--hide-crash-restore-bubble")) {
@@ -2288,6 +2289,16 @@ if (captchaSessionCheck.status !== 0) {
   process.stderr.write(captchaSessionCheck.stderr || captchaSessionCheck.stdout);
 } else {
   process.stdout.write(captchaSessionCheck.stdout);
+}
+const naverNavigationCheck = spawnSync(process.execPath, ["--test", path.join(root, "scripts", "check-naver-navigation.js")], {
+  cwd: root,
+  encoding: "utf8"
+});
+if (naverNavigationCheck.status !== 0) {
+  failed = true;
+  process.stderr.write(naverNavigationCheck.stdout + naverNavigationCheck.stderr);
+} else {
+  process.stdout.write(naverNavigationCheck.stdout);
 }
 const referenceSourceCheck = spawnSync(process.execPath, [path.join(root, "scripts", "check-reference-sources.js")], {
   cwd: root,

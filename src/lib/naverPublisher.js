@@ -57,7 +57,8 @@ async function gotoResilient(page, url, options = {}) {
 
 function activePage(context, fallbackPage) {
   const pages = context.pages().filter((item) => !item.isClosed());
-  return pages.find((item) => item.url() && item.url() !== "about:blank") || pages[0] || fallbackPage;
+  return (pages.includes(fallbackPage) && fallbackPage)
+    || pages.find((item) => item.url() && item.url() !== "about:blank") || pages[0] || fallbackPage;
 }
 
 function resolveBlogId(options = {}) {
@@ -647,12 +648,14 @@ async function waitForSecurityCheckComplete(page, selectors, log, options = {}) 
     } else if (state.state === "login_required") {
       log("네이버 보안 확인 이후 로그인 화면으로 이동했습니다.", "warn");
       return state;
-    } else {
+    } else if (state.state === "available") {
       availableReads += 1;
       if (availableReads >= stableReadsRequired) {
         log("네이버 보안 확인 완료를 확인했습니다. 중단한 작업을 이어갑니다.");
         return state;
       }
+    } else {
+      availableReads = 0;
     }
     await sleep(pollInterval);
   }
@@ -665,6 +668,7 @@ async function waitForLoginComplete(page, log, timeout = 10 * 60 * 1000, selecto
   let securityLogged = false;
   let loginLogged = false;
   let availableReads = 0;
+  let availableUrl = "";
 
   while (Date.now() < deadline) {
     const state = await detectLoginState(page, selectors);
@@ -681,12 +685,15 @@ async function waitForLoginComplete(page, log, timeout = 10 * 60 * 1000, selecto
         log("네이버 로그인 완료를 기다리는 중입니다.");
         loginLogged = true;
       }
-    } else {
-      availableReads += 1;
+    } else if (state.state === "available") {
+      availableReads = state.url === availableUrl ? availableReads + 1 : 1;
+      availableUrl = state.url;
       if (availableReads >= 2) {
         log("네이버 로그인 완료를 확인했습니다.");
         return state;
       }
+    } else {
+      availableReads = 0;
     }
 
     await sleep(Math.max(0, Number(pollInterval) || 0));
@@ -697,7 +704,17 @@ async function waitForLoginComplete(page, log, timeout = 10 * 60 * 1000, selecto
 
 async function detectLoginState(page, selectors = {}) {
   const url = page.url();
-  const bodyText = await readBodyText(page);
+  let bodyText = await readBodyText(page);
+  if (!bodyText.trim() && page.frames) {
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame?.()) continue;
+      try {
+        if (new URL(frame.url()).hostname !== "blog.naver.com") continue;
+      } catch { continue; }
+      bodyText = await readBodyText(frame);
+      if (bodyText.trim()) break;
+    }
+  }
   if (looksLikeAccountProtection(url, bodyText)) {
     const error = new Error("네이버 아이디 보호조치/로그인 제한이 감지되어 자동 작업을 중지합니다. 네이버에서 보호조치 사유를 확인하고 본인 인증으로 해제한 뒤, 계정관리의 세션확인을 직접 진행해 주세요.");
     error.code = "NAVER_ACCOUNT_PROTECTED";
@@ -711,6 +728,13 @@ async function detectLoginState(page, selectors = {}) {
   }
   if (/nid\.naver\.com\/nidlogin/i.test(url) || loginInputs > 0) {
     return { state: "login_required", url };
+  }
+  let parsed;
+  try { parsed = new URL(url); } catch { return { state: "pending", url }; }
+  if (parsed.hostname === "nid.naver.com"
+    || !["http:", "https:"].includes(parsed.protocol)
+    || !bodyText.trim()) {
+    return { state: "pending", url };
   }
   return { state: "available", url };
 }
@@ -754,42 +778,78 @@ async function assertNaverSessionActive(page, selectors, log, stage = "작업", 
 }
 
 async function verifyPostWriteSession(context, page, selectors, options, postWriteUrl, log) {
-  let currentPage = await gotoResilientInContext(context, page, postWriteUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: 60000
-  });
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await sleep(1200);
+  let currentPage = activePostWritePage(context, page, postWriteUrl);
+  const timeout = options.editorCheckTimeout || 60000;
+  let deadline = Date.now() + timeout;
+  let navigationRequested = false;
+  let loginRecoveryAttempts = 0;
+  let observedUrl = "";
+  let changedAt = Date.now();
+  if (!currentPage.url() || currentPage.url() === "about:blank") {
+    currentPage = await gotoResilientInContext(context, currentPage, postWriteUrl, {
+      waitUntil: "domcontentloaded", timeout: 60000
+    });
+    navigationRequested = true;
+  }
+  while (Date.now() < deadline) {
+    currentPage = activePostWritePage(context, currentPage, postWriteUrl);
     let state = await detectLoginState(currentPage, selectors);
     if (state.state === "security_check") {
       log("블로그 글쓰기 URL 진입 중 네이버 보안 확인이 표시되었습니다. 완료하면 자동으로 재확인합니다.", "warn");
       state = await waitForSecurityCheckComplete(currentPage, selectors, log, options);
-      currentPage = activePage(context, currentPage);
+      currentPage = activePostWritePage(context, currentPage, postWriteUrl);
+      deadline = Date.now() + timeout;
+      observedUrl = "";
+      navigationRequested = false;
     }
     if (state.state === "login_required") {
       if (options.interactiveLogin) {
+        if (++loginRecoveryAttempts > 2) {
+          throw sessionExpiredError("로그인 화면으로 반복 이동했습니다. 열린 크롬 창의 안내와 계정관리의 Blog ID를 확인해 주세요.");
+        }
         await completeLoginIfNeeded(currentPage, selectors, options, log);
-        currentPage = activePage(context, currentPage);
-        currentPage = await gotoResilientInContext(context, currentPage, postWriteUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: 60000
-        });
+        currentPage = activePostWritePage(context, currentPage, postWriteUrl);
+        deadline = Date.now() + timeout;
+        observedUrl = "";
+        navigationRequested = false;
         continue;
       }
       return { status: "expired", reason: "login_required", url: state.url, page: currentPage };
     }
-    if (!matchesTargetPostWriteUrl(currentPage.url(), postWriteUrl)) {
+    const url = currentPage.url();
+    if (state.state === "available" && matchesTargetPostWriteUrl(url, postWriteUrl)) {
+      log("블로그 글쓰기 URL 접근과 로그인 세션을 확인했습니다.");
+      return { status: "valid", reason: "postwrite_session_available", url, page: currentPage };
+    }
+    if (url !== observedUrl) {
+      observedUrl = url;
+      changedAt = Date.now();
+      log(`로그인 후 화면 이동을 기다립니다. 현재 주소: ${normalizeNavigationUrl(url)}`);
+    }
+    // Naver returns login to the blog home and can redirect again while loading.
+    // Reloading here on every poll cancels that redirect and makes Chrome flash.
+    if (state.state === "available" && navigationRequested && looksLikePostWriteUrl(url)) {
+      await saveEditorDiagnostics(currentPage, options, log);
+      const error = new Error(`블로그 글쓰기 화면으로 이동하지 못했습니다. 현재 주소: ${normalizeNavigationUrl(url)} / 목표 Blog ID: ${resolveBlogId(options)}. 열린 크롬 창의 안내와 계정관리의 Blog ID가 실제 블로그 주소와 같은지 확인해 주세요.`);
+      error.code = "NAVER_POSTWRITE_UNAVAILABLE";
+      throw error;
+    }
+    if (state.state === "available" && !navigationRequested && Date.now() - changedAt >= 5000) {
+      navigationRequested = true;
+      log("블로그 글쓰기 화면으로 이동합니다. 이후에는 새로고침 없이 편집기를 기다립니다.");
       currentPage = await gotoResilientInContext(context, currentPage, postWriteUrl, {
         waitUntil: "domcontentloaded",
         timeout: 60000
       });
+      observedUrl = "";
       continue;
     }
-
-    log("블로그 글쓰기 URL 접근과 로그인 세션을 확인했습니다.");
-    return { status: "valid", reason: "postwrite_session_available", url: currentPage.url(), page: currentPage };
+    await sleep(500);
   }
-  throw new Error(`네이버 보안 확인 후 블로그 글쓰기 URL로 복귀하지 못했습니다. 현재 URL: ${currentPage.url()}`);
+  await saveEditorDiagnostics(currentPage, options, log);
+  const error = new Error(`블로그 글쓰기 화면 이동을 기다리다 시간이 초과되었습니다. 현재 주소: ${normalizeNavigationUrl(currentPage.url())}. 열린 크롬 창의 안내와 계정관리의 Blog ID를 확인해 주세요.`);
+  error.code = "NAVER_POSTWRITE_UNAVAILABLE";
+  throw error;
 }
 
 async function verifyPostWriteEditorSession(context, page, selectors, options, postWriteUrl, log) {
@@ -819,40 +879,17 @@ async function verifyOpenNaverSession(options) {
   const selectors = {
     idInput: "#id",
     passwordInput: "#pw",
-    titleInput: "textarea[placeholder*='?쒕ぉ'], input[placeholder*='?쒕ぉ'], .se-title-text [contenteditable='true'], .se-title [contenteditable='true'], .se-title-text textarea, .se-title-text input",
+    titleInput: "textarea[placeholder*='제목'], input[placeholder*='제목'], .se-title-text [contenteditable='true'], .se-title [contenteditable='true'], .se-title-text textarea, .se-title-text input",
     ...parseDomNotes(options.domNotes)
   };
   const postWriteUrl = postWriteUrlFor(options);
   let page = activePostWritePage(context, options.preparedPage || options.page || null, postWriteUrl);
   if (!page) page = await context.newPage();
-  let loginState = await detectLoginState(page, selectors);
-  if (loginState.state === "security_check") {
-    await completeLoginIfNeeded(page, selectors, options, log);
-    page = activePostWritePage(context, page, postWriteUrl);
-    loginState = await detectLoginState(page, selectors);
-  }
-  if (loginState.state === "login_required") {
-    if (options.interactiveLogin) {
-      await completeLoginIfNeeded(page, selectors, options, log);
-      page = activePostWritePage(context, page, postWriteUrl);
-    } else {
-    return { status: "expired", reason: "login_required", url: loginState.url, page };
-    }
-  }
-  if (!matchesTargetPostWriteUrl(page.url(), postWriteUrl)) {
-    page = await gotoResilientInContext(context, page, postWriteUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 60000
-    });
-  }
-  await waitForPostWriteTitle(
-    page,
-    selectors,
-    options,
-    postWriteUrl,
-    log,
-    options.editorCheckTimeout || 60000
+  const result = await verifyPostWriteEditorSession(
+    context, page, selectors, { ...options, editorCheckTimeout: options.editorCheckTimeout || 60000 }, postWriteUrl, log
   );
+  if (result.status !== "valid") return result;
+  page = result.page;
   return {
     status: "valid",
     reason: "open_postwrite_editor_available",
@@ -1211,21 +1248,33 @@ async function saveEditorDiagnostics(page, options, log) {
 }
 
 function looksLikePostWriteUrl(url) {
-  try {
-    const parsed = new URL(String(url || ""));
-    return parsed.hostname === "blog.naver.com"
-      && /^\/[^/]+\/postwrite\/?$/i.test(parsed.pathname);
-  } catch {
-    return false;
-  }
+  return Boolean(normalizePostWriteUrl(url));
 }
 
 function normalizePostWriteUrl(url) {
   try {
     const parsed = new URL(String(url || ""));
-    return `${parsed.hostname.toLowerCase()}${decodeURIComponent(parsed.pathname).replace(/\/+$/, "").toLowerCase()}`;
+    if (parsed.hostname !== "blog.naver.com" || !["http:", "https:"].includes(parsed.protocol)) return "";
+    const pathMatch = /^\/([^/]+)\/postwrite\/?$/i.exec(parsed.pathname);
+    const formRoute = /^\/PostWriteForm\.naver\/?$/i.test(parsed.pathname);
+    const blogParams = [...parsed.searchParams].filter(([key]) => key.toLowerCase() === "blogid");
+    const blogId = pathMatch
+      ? decodeURIComponent(pathMatch[1])
+      : formRoute && blogParams.length === 1 ? blogParams[0][1] : "";
+    if (!blogId || /[\s/\\?#]/.test(blogId)) return "";
+    return `blog.naver.com/${blogId.toLowerCase()}/postwrite`;
   } catch {
     return "";
+  }
+}
+
+function normalizeNavigationUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const blogId = parsed.searchParams.get("blogId");
+    return `${parsed.origin}${parsed.pathname}${blogId ? `?blogId=${encodeURIComponent(blogId)}` : ""}`;
+  } catch {
+    return "(화면 이동 중)";
   }
 }
 
@@ -1237,7 +1286,6 @@ function matchesTargetPostWriteUrl(url, targetUrl) {
 function activePostWritePage(context, fallbackPage, targetUrl = "") {
   const pages = context.pages().filter((item) => !item.isClosed());
   return pages.find((item) => targetUrl && matchesTargetPostWriteUrl(item.url(), targetUrl))
-    || pages.find((item) => looksLikePostWriteUrl(item.url()))
     || activePage(context, fallbackPage);
 }
 
@@ -1272,7 +1320,6 @@ async function waitForPostWriteTitle(page, selectors, options, postWriteUrl, log
   let deadline = Date.now() + timeout;
   let editorLogged = false;
   let securityLogged = false;
-  let wrongUrlCount = 0;
   let loginRecoveryAttempts = 0;
 
   while (Date.now() < deadline) {
@@ -1289,36 +1336,30 @@ async function waitForPostWriteTitle(page, selectors, options, postWriteUrl, log
         securityLogged = true;
       }
       await completeLoginIfNeeded(page, selectors, options, log);
-      await gotoResilient(page, postWriteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
       deadline = Date.now() + timeout;
       continue;
     }
 
     if (loginState.state === "login_required") {
       await completeLoginIfNeeded(page, selectors, options, log);
-      await gotoResilient(page, postWriteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
       deadline = Date.now() + timeout;
       continue;
     }
 
     if (!matchesTargetPostWriteUrl(url, postWriteUrl)) {
-      wrongUrlCount += 1;
-      if (!editorLogged || wrongUrlCount % 5 === 0) {
-        log(`블로그 글쓰기 URL 재접근 중입니다. 현재 URL: ${url} / 목표 URL: ${postWriteUrl}`, "warn");
-        editorLogged = true;
-      }
-      if (wrongUrlCount >= 20) {
-        throw new Error(`블로그 글쓰기 URL을 열지 못했습니다. 현재 URL: ${url} / 목표 URL: ${postWriteUrl}. 계정관리의 Blog ID가 실제 블로그 주소와 맞는지 확인하세요.`);
-      }
-      if (false && (!editorLogged || wrongUrlCount % 5 === 0)) {
-        log(`블로그 글쓰기 URL이 아닌 화면입니다. 글쓰기 URL 재진입을 기다립니다: ${url}`, "warn");
-        editorLogged = true;
-      }
-      await gotoResilient(page, postWriteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-      await sleep(1000);
+      const result = await verifyPostWriteSession(
+        { pages: () => [page] }, page, selectors,
+        { ...options, interactiveLogin: options.failOnLoginRequired !== true, editorCheckTimeout: Math.max(1, deadline - Date.now()) },
+        postWriteUrl, log
+      );
+      if (result.status !== "valid") throw sessionExpiredError();
       continue;
     }
-    wrongUrlCount = 0;
+
+    if (loginState.state === "pending") {
+      await sleep(500);
+      continue;
+    }
 
     const draftDialogHandled = options.resumeDraftAfterSessionRecovery === true
       ? await resumeExistingDraftDialog(page, log)
@@ -2946,6 +2987,8 @@ module.exports = {
     waitForLoginComplete,
     assertNaverSessionActive,
     completeLoginIfNeeded,
-    verifyPostWriteSession
+    verifyPostWriteSession,
+    looksLikePostWriteUrl,
+    matchesTargetPostWriteUrl
   }
 };
