@@ -273,7 +273,7 @@ if (completedImageRetryIssue) {
   console.error(`src/lib/codexRunner.js: successful prior images must survive a partial retry merge: ${completedImageRetryIssue}`);
 }
 
-const extensionChecks=spawnSync(process.execPath,['--test','scripts/check-extension-bridge.js','scripts/check-extension-editor.js','scripts/check-extension-desktop.js','scripts/check-desktop-publishing.js'],{cwd:root,encoding:'utf8'});
+const extensionChecks=spawnSync(process.execPath,['--test','scripts/check-extension-bridge.js','scripts/check-extension-editor.js','scripts/check-extension-desktop.js','scripts/check-desktop-publishing.js','scripts/check-local-state.js'],{cwd:root,encoding:'utf8'});
 process.stdout.write(extensionChecks.stdout || '');process.stderr.write(extensionChecks.stderr || '');
 if(extensionChecks.status!==0)failed=true;
 if (failed) {
@@ -1419,10 +1419,7 @@ if (legacyReferences.length !== 1 || legacyReferences[0].path !== "C:/legacy/sam
   failed = true;
   console.error("Existing single reference images must migrate, while an explicitly empty list must stay empty");
 }
-if (!sourceFiles.codexRunner.content.includes("\"--ephemeral\"") || !sourceFiles.codexRunner.content.includes("\"--ignore-rules\"")) {
-  failed = true;
-  console.error("src/lib/codexRunner.js: startup usage snapshot should be ephemeral and ignore project rules");
-}
+// check-local-state.js verifies usage refresh never starts a model process.
 if (!sourceFiles.settings.content.includes("codexRateLimits: null")) {
   failed = true;
   console.error("src/lib/settings.js: settings defaults must include codexRateLimits: null");
@@ -1444,10 +1441,7 @@ if (codexRefreshHandler && !codexRefreshHandler.content.includes("savedFallback"
   failed = true;
   console.error("src/main.js: codex:refreshUsage must return saved rate limits when live usage refresh is unavailable");
 }
-if (!sourceFiles.codexRunner.content.includes("rate_limits가 포함되지 않아 배지를 갱신하지 못했습니다")) {
-  failed = true;
-  console.error("src/lib/codexRunner.js: missing Codex rate_limits during usage refresh must be treated as badge refresh unavailable, not a fatal job error");
-}
+// Missing local rate limits are covered as a nonfatal unavailable result there.
 if (!sourceFiles.main.content.includes("persistCodexRateLimits(runtimeRoot, jobTokenUsage.rateLimits)")) {
   failed = true;
   console.error("src/main.js: latest Codex rate limits must be persisted after terminal jobs");

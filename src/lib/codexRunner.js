@@ -2573,114 +2573,11 @@ async function runCodexTask({
   };
 }
 
-async function fetchCodexUsageSnapshot({
-  codexCmdPath = "codex.cmd",
-  cwd = process.cwd(),
-  timeoutMs = 30000
-} = {}) {
-  const sessionSnapshot = readLatestCodexRateLimitsFromSessions();
-  if (sessionSnapshot?.rateLimits) {
-    return sessionSnapshot;
-  }
-
-  return new Promise((resolve) => {
-    const child = spawn(codexCmdPath, [
-      "exec",
-      "--json",
-      "--ephemeral",
-      "--skip-git-repo-check",
-      "--ignore-rules",
-      "-c",
-      "model_reasoning_effort=low",
-      "-"
-    ], {
-      cwd,
-      windowsHide: true,
-      shell: shouldRunCodexViaShell(codexCmdPath)
-    });
-
-    let settled = false;
-    let latestRateLimits = null;
-    let latestTokens = 0;
-    let timer = null;
-    const finish = (unavailableReason = "") => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (!child.killed) {
-        child.kill();
-      }
-      const fallbackSnapshot = readLatestCodexRateLimitsFromSessions();
-      if (!latestRateLimits && fallbackSnapshot?.rateLimits) {
-        resolve(fallbackSnapshot);
-        return;
-      }
-      if (unavailableReason) {
-        resolve({
-          source: "unavailable",
-          unavailableReason,
-          tokenUsage: {
-            total: latestTokens,
-            rateLimits: null
-          },
-          rateLimits: null
-        });
-        return;
-      }
-      resolve({
-        source: "codex-exec",
-        tokenUsage: {
-          total: latestTokens,
-          rateLimits: latestRateLimits
-        },
-        rateLimits: latestRateLimits
-      });
-    };
-    timer = setTimeout(() => {
-      if (latestRateLimits) {
-        finish();
-      } else {
-        finish("Codex 사용량 정보를 제한 시간 안에 읽지 못했습니다.");
-      }
-    }, timeoutMs);
-
-    const handleChunk = (chunk) => {
-      String(chunk)
-        .split(/\r?\n/)
-        .forEach((line) => {
-          if (settled) return;
-          const text = stripAnsi(line).trim();
-          if (!text) return;
-          const parsed = tryParseJsonLine(text);
-          if (!parsed) return;
-          const parsedTokens = jsonTokenTotal(parsed);
-          if (parsedTokens !== null) {
-            latestTokens = parsedTokens;
-          }
-          const parsedRateLimits = jsonRateLimits(parsed);
-          if (parsedRateLimits) {
-            latestRateLimits = parsedRateLimits;
-            finish();
-          }
-        });
-    };
-
-    child.stdout.on("data", handleChunk);
-    child.stderr.on("data", handleChunk);
-    child.on("error", (error) => finish(`codex.cmd 사용량 확인 실패: ${error.message}`));
-    child.on("close", (code) => {
-      if (settled) return;
-      if (latestRateLimits) {
-        finish();
-      } else {
-        const reason = code === 0
-          ? "codex.cmd 사용량 조회는 정상 종료됐지만 rate_limits가 포함되지 않아 배지를 갱신하지 못했습니다."
-          : `codex.cmd 사용량 조회가 종료 코드 ${code}로 끝났고 rate_limits가 포함되지 않아 배지를 갱신하지 못했습니다.`;
-        finish(reason);
-      }
-    });
-    child.stdin.end("Return exactly OK.");
-  });
+async function fetchCodexUsageSnapshot() {
+  return readLatestCodexRateLimitsFromSessions() || {
+    source:'unavailable',rateLimits:null,tokenUsage:{total:0,rateLimits:null},
+    unavailableReason:'최근 로컬 사용량 기록이 없습니다. 글 생성 후 표시를 갱신할 수 있습니다.'
+  };
 }
 
 async function runCodexGeneration(options, log = () => {}) {

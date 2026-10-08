@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const {writeJsonAtomic}=require("./atomicJson");
 const path = require("node:path");
 
 const DEFAULT_ACCOUNT_STORE = {
@@ -156,7 +157,7 @@ function ensureAccountStoreFile(runtimeRoot, settingsForMigration = {}) {
   const storePath = getAccountStorePath(runtimeRoot);
   if (!fs.existsSync(storePath)) {
     const initial = normalizeStore({}, settingsForMigration);
-    fs.writeFileSync(storePath, `${JSON.stringify(initial, null, 2)}\n`, "utf8");
+    writeJsonAtomic(storePath, initial);
   }
 }
 
@@ -174,7 +175,7 @@ function readAccountStore(runtimeRoot, settingsForMigration = {}) {
       ));
     if (containsStoredPassword) {
       try {
-        fs.writeFileSync(storePath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+        writeJsonAtomic(storePath, normalized);
       } catch {
         // Keep using the in-memory credential-free data even if a legacy file is read-only.
       }
@@ -190,7 +191,7 @@ function writeAccountStore(runtimeRoot, nextStore, settingsForMigration = {}) {
   const normalized = normalizeStore(nextStore || DEFAULT_ACCOUNT_STORE, settingsForMigration, {
     allowSettingsMigration: false
   });
-  fs.writeFileSync(getAccountStorePath(runtimeRoot), `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+  writeJsonAtomic(getAccountStorePath(runtimeRoot), normalized);
   return normalized;
 }
 

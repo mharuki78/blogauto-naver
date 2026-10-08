@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const {writeJsonAtomic}=require("./atomicJson");
 const os = require("node:os");
 const path = require("node:path");
 const { normalizeCodexModel } = require("./codexModels");
@@ -59,7 +60,7 @@ function ensureSettingsFile(runtimeRoot) {
   fs.mkdirSync(runtimeRoot, { recursive: true });
   const settingsPath = getSettingsPath(runtimeRoot);
   if (!fs.existsSync(settingsPath)) {
-    fs.writeFileSync(settingsPath, `${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`, "utf8");
+    writeJsonAtomic(settingsPath, DEFAULT_SETTINGS);
   }
 }
 
@@ -159,7 +160,7 @@ function readSettings(runtimeRoot) {
       || Object.prototype.hasOwnProperty.call(parsed, "password")
     ) {
       try {
-        fs.writeFileSync(getSettingsPath(runtimeRoot), `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+        writeJsonAtomic(getSettingsPath(runtimeRoot), normalized);
       } catch {
         // A read-only legacy file must not prevent the already sanitized settings from loading.
       }
@@ -178,7 +179,7 @@ function writeSettings(runtimeRoot, nextSettings) {
     ...Object.fromEntries(Object.entries(nextSettings || {}).filter(([, value]) => value !== undefined))
   };
   const normalized = normalizeSettings(merged);
-  fs.writeFileSync(getSettingsPath(runtimeRoot), `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+  writeJsonAtomic(getSettingsPath(runtimeRoot), normalized);
   return normalized;
 }
 
