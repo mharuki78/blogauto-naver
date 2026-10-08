@@ -143,7 +143,7 @@
 - [x] Approved specification read and mapped to tasks.
 - [x] Interfaces, task ordering and five Review Focus cases checked.
 - [x] No new document/OCR dependencies or generation-pipeline replacement included.
-- [ ] User reviews this implementation plan and selects execution method.
+- [x] User reviews this implementation plan and selects execution method: Native implementation + final whole-branch review.
 - [ ] Execute approved tasks and verification.
 
 Recommendation: **Native** execution in this chat. Tasks depend on the existing main/renderer flow and the same adapter interfaces; one implementer can preserve that context, then a fresh reviewer checks the full branch before packaging.

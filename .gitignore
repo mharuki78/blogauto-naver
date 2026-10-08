@@ -10,6 +10,10 @@ dist/runtime/
 **/account-assets/
 **/browser-profile/
 **/browser-profiles/
+**/extension-connections.json
+**/extension-tasks.json
+**/account-chrome/
+**/chrome-shortcuts/
 
 # Environment and secrets
 .env
