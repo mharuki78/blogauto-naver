@@ -1,0 +1,8 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>블로그 연결</title><link rel="stylesheet" href="connect.css"></head>
+<body><main><span class="eyebrow">HIMAWARI BLOG / CHROME</span><h1>평소 쓰던 계정 그대로.</h1><p>이 Chrome에 로그인된 네이버 또는 티스토리 계정을 앱에 연결합니다. 비밀번호는 앱으로 전달하지 않습니다.</p>
+<ol><li>앱에 블로그를 추가하고 <b>확장 연결 코드</b>을 누르세요.</li><li>표시된 연결 코드를 아래에 입력하세요.</li><li>로그인이 필요할 때만 열린 블로그 화면에서 직접 로그인하세요.</li></ol>
+<form id="pairForm"><label for="code">앱에 표시된 연결 코드</label><div class="row"><input id="code" autocomplete="off" maxlength="10" placeholder="10자리 코드" required><button>이 Chrome 연결</button></div></form>
+<p id="status" role="status" aria-live="polite">연결 확인 중…</p><div class="row"><button id="login">로그인 / 상태 확인</button><button id="disconnect" class="secondary">이 Chrome 연결 해제</button></div>
+<aside><b>계정별로 로그인 유지</b><p>앱에서 해당 계정의 ‘Chrome 열기’를 눌러 연 창에 연결하세요. Google 계정은 필요하지 않습니다. 네이버는 계정별 창을 사용합니다. 티스토리는 공용 창 한 개를 연결하면 지정된 여러 블로그에 같은 로그인을 사용합니다. 앱이나 확장은 로그인 쿠키를 읽거나 교체하지 않습니다.</p></aside>
+<small>작성 중에는 대상 탭을 조작하지 마세요. 확장의 페이지 스크립트가 입력합니다. 브라우저 자동화 드라이버나 디버거를 사용하지 않습니다.</small>
+</main><script src="connect.js"></script></body></html>

@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Himawari Blog · 네이버·티스토리 연결",
+  "version": "0.3.17",
+  "minimum_chrome_version": "120",
+  "description": "일반 Chrome 로그인으로 네이버와 티스토리 글쓰기를 연결합니다.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://blog.naver.com/*",
+    "https://nid.naver.com/*",
+    "https://*.tistory.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Himawari Blog 연결 열기",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://blog.naver.com/*"
+      ],
+      "js": [
+        "draft-reload-guard.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}

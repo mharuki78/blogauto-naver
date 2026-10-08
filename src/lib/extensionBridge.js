@@ -219,7 +219,7 @@ class ExtensionBridge extends EventEmitter {
   }
   publicPayload(t) {
     const files=this.assetPaths(t); return { ...t.payload, titleImagePath:undefined, titleImageName:t.payload.titleImagePath ? path.basename(t.payload.titleImagePath) : '', titleImageIndex:t.payload.titleImagePath ? files.indexOf(t.payload.titleImagePath) : null,
-      bodyImages:(t.payload.bodyImages || []).map(i=>({sequence:i.sequence,index:files.indexOf(i.path),name:path.basename(i.path)})) };
+      bodyImages:(t.payload.bodyImages || []).map(i=>({sequence:i.sequence,index:files.indexOf(i.path),name:path.basename(i.path),isReferenceOriginal:i.isReferenceOriginal===true})) };
   }
 }
 let bridge;
