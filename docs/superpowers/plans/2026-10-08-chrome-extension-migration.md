@@ -57,11 +57,11 @@
 - Events: `status(accountId,snapshot)` and `progress(accountId,message)`. Saved tasks include ID, account, platform, state, stage, payload and result.
 - `openAccountChrome(root, account, shell, options={}): Promise<LaunchSpec>`; `TISTORY_ACCOUNT_ID='tistory-shared'`, `normalizeTistoryBlogId(value): string`.
 
-- [ ] **Step 1:** HTTP test cases: valid pairing is single use; another account token cannot finish a task or read an image; non-extension origin and non-loopback Host are denied; disconnected account rejects before enqueue; stopping/restarting a `final_publish` task preserves the uncertain attempt.
-- [ ] **Step 2:** Run `node --test scripts/check-extension-bridge.js`; confirm the new modules are missing before implementation.
-- [ ] **Step 3:** Adapt the pinned upstream bridge/launcher/target modules. Resolve exposed image paths within the runtime's generated/reference image folders, retain image type/size limits, and persist active-task stage before responding. Re-pairing or revocation cancels only the affected account. Use explicit launch arguments without automation flags.
-- [ ] **Step 4:** Run the HTTP tests and launcher cases: two account IDs yield separate stable profile directories; URL-like Tistory ID normalizes; no cookie/Chrome preference copying; CLI helpers do not launch Chrome during unit tests.
-- [ ] **Step 5:** Commit these files and ignore runtime connection/token/Chrome directories.
+- [x] **Step 1:** HTTP test cases: valid pairing is single use; another account token cannot finish a task or read an image; non-extension origin and non-loopback Host are denied; disconnected account rejects before enqueue; stopping/restarting a `final_publish` task preserves the uncertain attempt.
+- [x] **Step 2:** Run `node --test scripts/check-extension-bridge.js`; confirm the new modules are missing before implementation.
+- [x] **Step 3:** Adapt the pinned upstream bridge/launcher/target modules. Resolve exposed image paths within the runtime's generated/reference image folders, retain image type/size limits, and persist active-task stage before responding. Re-pairing or revocation cancels only the affected account. Use explicit launch arguments without automation flags.
+- [x] **Step 4:** Run the HTTP tests and launcher cases: two account IDs yield separate stable profile directories; URL-like Tistory ID normalizes; no cookie/Chrome preference copying; CLI helpers do not launch Chrome during unit tests.
+- [x] **Step 5:** Commit these files and ignore runtime connection/token/Chrome directories.
 
 ### Task 2: Chrome 확장 이식과 기존 로그인 회귀 방지
 
@@ -73,11 +73,11 @@
 - Image payload includes `titleIsReferenceOriginal` and `bodyImages[].isReferenceOriginal`; write steps carry an `aiGenerated` boolean.
 - Editor session result contains `status`, `blogId`, `editorBuild='20261008.1'`; completed results use published URL, reservation-list proof, or draft-list proof.
 
-- [ ] **Step 1:** Tests cover direct postwrite, PostWriteForm `.naver/.nhn`, form plus Write query, outer `?Redirect=Write`, wrong blog, Update and conflicting/duplicate parameters. Assert a ready Write tab is activated without URL navigation or reload.
-- [ ] **Step 2:** Run `node --test scripts/check-extension-editor.js`; verify route/extension modules are missing.
-- [ ] **Step 3:** Adapt upstream extension with local branding/version and the shared Write matcher. Preserve all-frame inspection, manual login waiting, operation verification, draft saving checks, reservation checks and no automatic final-publish retry. Preserve article text/reference/footer while planning editor layout.
-- [ ] **Step 4:** Pass original-image flags through bridge, steps and editor commands. Add real Chrome DOM cases for mixed original/generated images, nonempty draft preservation, input no-op retry and partial input rejection. Run tests on mocked Chrome transport plus actual Chrome frame/DOM fixtures, without a live publication.
-- [ ] **Step 5:** Commit the extension, tests and pinned upstream attribution. Preserve included license/notices; do not label the whole source MIT.
+- [x] **Step 1:** Tests cover direct postwrite, PostWriteForm `.naver/.nhn`, form plus Write query, outer `?Redirect=Write`, wrong blog, Update and conflicting/duplicate parameters. Assert a ready Write tab is activated without URL navigation or reload.
+- [x] **Step 2:** Run `node --test scripts/check-extension-editor.js`; verify route/extension modules are missing.
+- [x] **Step 3:** Adapt upstream extension with local branding/version and the shared Write matcher. Preserve all-frame inspection, manual login waiting, operation verification, draft saving checks, reservation checks and no automatic final-publish retry. Preserve article text/reference/footer while planning editor layout.
+- [x] **Step 4:** Pass original-image flags through bridge, steps and editor commands. Add real Chrome DOM cases for mixed original/generated images, nonempty draft preservation, input no-op retry and partial input rejection. Run tests on mocked Chrome transport plus actual Chrome frame/DOM fixtures, without a live publication.
+- [x] **Step 5:** Commit the extension, tests and pinned upstream attribution. Preserve included license/notices; do not label the whole source MIT.
 
 ### Task 3: 앱·설치 화면·데스크톱 발행 어댑터 연결
 
@@ -90,11 +90,11 @@
 - IPC: `chrome:openAccount`, `tistory:open`, `extension:setup`, `extension:pair`, `tistory:pair`, `extension:connections`, `extension:cancel`, `extension:revoke`; preload exposes corresponding named methods.
 - Account UI data adds `connection:snapshot` without replacing stored account/category fields.
 
-- [ ] **Step 1:** Tests: app initial data reports disconnected despite old `sessionStatus:'valid'`; missing connection rejects before any generation call; Blog ID change/deletion revokes stale connection; old ChatGPT/model/product/reference IPC remains available.
-- [ ] **Step 2:** Run `node --test scripts/check-extension-desktop.js` and confirm the new adapter/setup are missing.
-- [ ] **Step 3:** Add bridge startup/shutdown and single-instance behavior, with `BLOGAUTO_USER_DATA` override for isolated Electron verification. Change only desktop publisher imports, pass account IDs at every desktop session/publish call, and stop treating legacy page/context caches as new connection evidence. Broadcast bridge status through the existing account-update channel.
-- [ ] **Step 4:** Add installation path/copy guidance, per-account Chrome/code/cancel/revoke buttons and Tistory shared connection. Keep current UI labels and functions usable; guard repeated clicks and show errors near connection controls. New Chrome stays open when app ends. Generation-only mode does not require a publishing connection.
-- [ ] **Step 5:** Run adapter/IPC tests and the existing Electron smoke inspection in an isolated runtime. Assert Himawari logo/title, product inputs, multiple photos, GPT-6.1 Sol and direct/auto topic controls. Commit.
+- [x] **Step 1:** Tests: app initial data reports disconnected despite old `sessionStatus:'valid'`; missing connection rejects before any generation call; Blog ID change/deletion revokes stale connection; old ChatGPT/model/product/reference IPC remains available.
+- [x] **Step 2:** Run `node --test scripts/check-extension-desktop.js` and confirm the new adapter/setup are missing.
+- [x] **Step 3:** Add bridge startup/shutdown and single-instance behavior, with `BLOGAUTO_USER_DATA` override for isolated Electron verification. Change only desktop publisher imports, pass account IDs at every desktop session/publish call, and stop treating legacy page/context caches as new connection evidence. Broadcast bridge status through the existing account-update channel.
+- [x] **Step 4:** Add installation path/copy guidance, per-account Chrome/code/cancel/revoke buttons and Tistory shared connection. Keep current UI labels and functions usable; guard repeated clicks and show errors near connection controls. New Chrome stays open when app ends. Generation-only mode does not require a publishing connection.
+- [x] **Step 5:** Run adapter/IPC tests and the existing Electron smoke inspection in an isolated runtime. Assert Himawari logo/title, product inputs, multiple photos, GPT-6.1 Sol and direct/auto topic controls. Commit.
 
 ### Task 4: 발행 증거와 플랫폼별 재개
 
@@ -106,11 +106,11 @@
 - `draft.publications[platform]` has `status:'running'|'done'|'failed'|'uncertain'` plus completion proof. A result proves direct publication with the actual target post URL; reservation with `verification:'reservation-list'`, scheduled time and management URL; draft with title/time/list proof and clean editor return.
 - `PUBLISH_UNCERTAIN` stops automatic retries and keeps the draft; `EXTENSION_DISCONNECTED`/login failures keep account state and Chrome.
 
-- [ ] **Step 1:** Tests: Naver success followed by Tistory failure retries Tistory only; missing/wrong completion proof is uncertain; stop/restart after final click never enqueues the same article again; verified reservation recovery does not publish; pre-final interrupted writing may resume only when its durable journal proves no final attempt.
-- [ ] **Step 2:** Run `node --test scripts/check-desktop-publishing.js`; observe missing modules.
-- [ ] **Step 3:** Adapt upstream sequence/recovery to the existing draft schema without importing its generation pipeline/history dependencies. Save publication state before and after each platform. Connect both current pending-draft and freshly generated publishing paths to the same sequence. Keep current product policy checks.
-- [ ] **Step 4:** Add an explicit Naver draft-save choice connected to the new engine and its completion evidence. For legacy pending drafts with no platform journal, preserve the article and require the user to check prior publication; never infer that a platform succeeded or is safe to repeat. Stop automatic loops on an uncertain outcome.
-- [ ] **Step 5:** Run sequence/recovery and renderer status cases; integrate new checks into `npm run check` without dropping existing legacy/web/product checks. Commit.
+- [x] **Step 1:** Tests: Naver success followed by Tistory failure retries Tistory only; missing/wrong completion proof is uncertain; stop/restart after final click never enqueues the same article again; verified reservation recovery does not publish; pre-final interrupted writing may resume only when its durable journal proves no final attempt.
+- [x] **Step 2:** Run `node --test scripts/check-desktop-publishing.js`; observe missing modules.
+- [x] **Step 3:** Adapt upstream sequence/recovery to the existing draft schema without importing its generation pipeline/history dependencies. Save publication state before and after each platform. Connect both current pending-draft and freshly generated publishing paths to the same sequence. Keep current product policy checks.
+- [x] **Step 4:** Add an explicit Naver draft-save choice connected to the new engine and its completion evidence. For legacy pending drafts with no platform journal, preserve the article and require the user to check prior publication; never infer that a platform succeeded or is safe to repeat. Stop automatic loops on an uncertain outcome.
+- [x] **Step 5:** Run sequence/recovery and renderer status cases; integrate new checks into `npm run check` without dropping existing legacy/web/product checks. Commit.
 
 ### Task 5: 사용량 조회와 설정 저장 안정성
 
@@ -121,10 +121,10 @@
 - Existing `writeSettings(root,patch)`, `writeAccountStore(root,store,settings)` signatures/schema remain.
 - `fetchCodexUsageSnapshot(): Promise<Snapshot>` returns local session data or `source:'unavailable',rateLimits:null`; never launches an inference process for this display refresh.
 
-- [ ] **Step 1:** Assert forced replacement failure leaves byte-identical valid previous settings and account JSON, including a pending article. Assert settings retain manual topic/generation-only/product/model values. Assert missing local usage records return unavailable with zero child-process spawns; existing session records still return limits.
-- [ ] **Step 2:** Run `node --test scripts/check-local-state.js`; confirm failure against direct writes/exec fallback.
-- [ ] **Step 3:** Implement the small atomic JSON helper using APIs supported by bundled Electron Node. Apply it to normal writes and legacy credential cleanup. Remove only usage-display inference fallback and retain saved/local limits handling and generation token accounting.
-- [ ] **Step 4:** Run local-state tests and existing source/model/account regressions. Commit.
+- [x] **Step 1:** Assert forced replacement failure leaves byte-identical valid previous settings and account JSON, including a pending article. Assert settings retain manual topic/generation-only/product/model values. Assert missing local usage records return unavailable with zero child-process spawns; existing session records still return limits.
+- [x] **Step 2:** Run `node --test scripts/check-local-state.js`; confirm failure against direct writes/exec fallback.
+- [x] **Step 3:** Implement the small atomic JSON helper using APIs supported by bundled Electron Node. Apply it to normal writes and legacy credential cleanup. Remove only usage-display inference fallback and retain saved/local limits handling and generation token accounting.
+- [x] **Step 4:** Run local-state tests and existing source/model/account regressions. Commit.
 
 ### Task 6: 호환성 검사·설치 안내·Windows 배포
 
@@ -132,11 +132,11 @@
 
 **Interfaces:** Windows portable `Himawari-Blog-Automator-Made-by-Hyunjin-0.2.0.exe`; bundled extension resources + attribution; existing `runtime` stays outside the executable.
 
-- [ ] **Step 1:** Add resource checks for all manifest/script/icon files, version/build identity, unchanged app/logo assets, and absence of credentials/profiles/tokens in the template. Document the actual first-install and update sequence in Korean.
-- [ ] **Step 2:** Run `npm run check` and isolated Electron smoke tests. Inspect the changed UI using the required UI/UX skill and current browser guide. Verify existing web publication imports are unchanged. Fix concrete failures and stop expanding tests after required risks are covered.
-- [ ] **Step 3:** Obtain independent whole-branch code review, resolve Critical/Important findings, and rerun the affected tests plus final required checks.
-- [ ] **Step 4:** Bump app to 0.2.0, run `npm run dist`, and verify packaged source and extension against the reviewed files. Confirm EXE/document hashes and preserved desktop runtime before replacing the local shortcut target.
-- [ ] **Step 5:** Commit final files. Follow existing GitHub synchronization authorization to publish reviewed source and EXE/guide/SHA256 release assets; verify remote commit/tag and uploaded digests. Report tested scope, required extension setup and actual-account verification limitation.
+- [x] **Step 1:** Add resource checks for all manifest/script/icon files, version/build identity, unchanged app/logo assets, and absence of credentials/profiles/tokens in the template. Document the actual first-install and update sequence in Korean.
+- [x] **Step 2:** Run `npm run check` and isolated Electron smoke tests. Inspect the changed UI using the required UI/UX skill and current browser guide. Verify existing web publication imports are unchanged. Fix concrete failures and stop expanding tests after required risks are covered.
+- [x] **Step 3:** Obtain independent whole-branch code review, resolve Critical/Important findings, and rerun the affected tests plus final required checks.
+- [x] **Step 4:** Bump app to 0.2.0, run `npm run dist`, and verify packaged source and extension against the reviewed files. Confirm EXE/document hashes and preserved desktop runtime before replacing the local shortcut target.
+- [x] **Step 5:** Commit final files. Follow existing GitHub synchronization authorization to publish reviewed source and EXE/guide/SHA256 release assets; verify remote commit/tag and uploaded digests. Report tested scope, required extension setup and actual-account verification limitation.
 
 ## Plan Review State
 
@@ -144,6 +144,6 @@
 - [x] Interfaces, task ordering and five Review Focus cases checked.
 - [x] No new document/OCR dependencies or generation-pipeline replacement included.
 - [x] User reviews this implementation plan and selects execution method: Native implementation + final whole-branch review.
-- [ ] Execute approved tasks and verification.
+- [x] Execute approved tasks and verification.
 
 Recommendation: **Native** execution in this chat. Tasks depend on the existing main/renderer flow and the same adapter interfaces; one implementer can preserve that context, then a fresh reviewer checks the full branch before packaging.
