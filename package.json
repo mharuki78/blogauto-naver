@@ -1,6 +1,6 @@
 {
   "name": "blogauto-naver-tistory",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Windows desktop automation console for Naver Blog publishing through codex.cmd.",
   "main": "src/main.js",
   "scripts": {
@@ -23,9 +23,18 @@
     },
     "files": [
       "src/**/*",
+      "extension/**/*",
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "extension",
+        "to": "extension"
+      },
+      {
+        "from": "UPSTREAM_NOTICES.md",
+        "to": "UPSTREAM_NOTICES.md"
+      },
       {
         "from": "runtime-template",
         "to": "runtime"

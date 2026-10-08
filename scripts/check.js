@@ -273,7 +273,7 @@ if (completedImageRetryIssue) {
   console.error(`src/lib/codexRunner.js: successful prior images must survive a partial retry merge: ${completedImageRetryIssue}`);
 }
 
-const extensionChecks=spawnSync(process.execPath,['--test','scripts/check-extension-bridge.js','scripts/check-extension-editor.js','scripts/check-extension-desktop.js','scripts/check-desktop-publishing.js','scripts/check-local-state.js'],{cwd:root,encoding:'utf8'});
+const extensionChecks=spawnSync(process.execPath,['--test','scripts/check-extension-bridge.js','scripts/check-extension-editor.js','scripts/check-extension-desktop.js','scripts/check-desktop-publishing.js','scripts/check-local-state.js','scripts/check-extension-package.js'],{cwd:root,encoding:'utf8'});
 process.stdout.write(extensionChecks.stdout || '');process.stderr.write(extensionChecks.stderr || '');
 if(extensionChecks.status!==0)failed=true;
 if (failed) {

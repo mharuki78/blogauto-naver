@@ -28,15 +28,17 @@ for (const runtimeRoot of targets) {
   }
 }
 
-fs.copyFileSync(
-  path.join(root, "EMPLOYEE_SETUP.md"),
-  path.join(root, "dist", "EMPLOYEE_SETUP.md")
-);
+for (const document of ['EMPLOYEE_SETUP.md', 'UPSTREAM_NOTICES.md']) {
+  fs.copyFileSync(path.join(root, document), path.join(root, 'dist', document));
+}
 const executableName = `Himawari-Blog-Automator-Made-by-Hyunjin-${version}.exe`;
 const executablePath = path.join(root, "dist", executableName);
 if (fs.existsSync(executablePath)) {
-  const sha256 = crypto.createHash("sha256").update(fs.readFileSync(executablePath)).digest("hex");
-  fs.writeFileSync(path.join(root, "dist", "SHA256SUMS.txt"), `${sha256}  ${executableName}\n`, "utf8");
+  const sums = [executableName, 'EMPLOYEE_SETUP.md', 'UPSTREAM_NOTICES.md'].map(name => {
+    const sha256 = crypto.createHash('sha256').update(fs.readFileSync(path.join(root,'dist',name))).digest('hex');
+    return `${sha256}  ${name}`;
+  });
+  fs.writeFileSync(path.join(root, 'dist', 'SHA256SUMS.txt'), `${sums.join('\n')}\n`, 'utf8');
 }
 
 console.log("Prepared distributable runtime folders.");
