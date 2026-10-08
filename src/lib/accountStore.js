@@ -220,7 +220,15 @@ function getAccountProfileDir(runtimeRoot, account) {
   return path.join(runtimeRoot, "browser-profiles", segment);
 }
 
+function revokeChangedConnections(bridge, previous, next) {
+  for(const account of previous.accounts || []) {
+    const replacement=(next.accounts || []).find(item=>item.id===account.id);
+    if(!replacement || String(replacement.blogId || '')!==account.blogId)bridge.revoke(account.id);
+  }
+}
+
 module.exports = {
+  revokeChangedConnections,
   DEFAULT_ACCOUNT_STORE,
   ensureAccountStoreFile,
   readAccountStore,

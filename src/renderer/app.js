@@ -22,6 +22,29 @@ const state = {
   editingCategoryId: ""
 };
 
+const connectionMessages=new Map();
+const connectionBusy=new Set();
+async function runConnectionAction(key,button,status,action) {
+  if(connectionBusy.has(key))return;
+  connectionBusy.add(key);button.disabled=true;button.setAttribute('aria-busy','true');
+  if(status)status.textContent='처리 중…';
+  try {
+    const message=await action();
+    if(message)connectionMessages.set(key,message);
+    if(status)status.textContent=message || '완료';
+  } catch(error) {
+    connectionMessages.set(key,error.message);if(status)status.textContent=error.message;
+    addLog({level:'error',message:error.message,at:new Date().toISOString()});
+  } finally {
+    connectionBusy.delete(key);button.disabled=false;button.removeAttribute('aria-busy');
+    if(key!=='setup' && !key.startsWith('tistory'))renderAccounts();
+  }
+}
+async function refreshExtensionConnections() {
+  const snapshot=await window.blogAuto.extensionConnections();
+  const status=$('#tistoryExtensionStatus');
+  if(status && ![...connectionBusy].some(k=>k.startsWith('tistory')) && !connectionMessages.has('tistory'))status.textContent=snapshot.tistory.connected?'티스토리 공용 Chrome 연결됨 · '+(snapshot.tistory.reason || snapshot.tistory.status):'티스토리 공용 Chrome 미연결';
+}
 const $ = (selector) => document.querySelector(selector);
 const DEFAULT_NAVER_SEARCH_URL = "https://search.naver.com/search.naver?ssc=tab.blog.all&sm=tab_jum&query={query}";
 const DEFAULT_GOOGLE_SEARCH_URL = "https://www.google.com/search?q={query}&num=20&hl=ko";
@@ -321,9 +344,9 @@ function statusBadge(status) {
 }
 
 function sessionBadge(account) {
-  const status = account.sessionStatus || "unknown";
+  const status = account.connection?.connected ? account.connection.status : 'disconnected';
   const className = status === "valid" ? "success" : status === "expired" ? "danger" : "warning";
-  const label = status === "valid" ? "정상" : status === "expired" ? "세션만료" : "미확인";
+  const label = status === 'disconnected' ? '확장 미연결' : status === 'valid' ? '연결 · 정상' : account.connection?.busy ? '확인 중' : '로그인 확인 필요';
   return `<span class="badge ${className}">${label}</span>`;
 }
 
@@ -765,17 +788,34 @@ function renderAccounts() {
       <input class="list-check" type="checkbox" ${account.checked !== false ? "checked" : ""} aria-label="자동 발행 계정 선택" />
       <div class="account-main">
         <strong title="${escapeHtml(accountDisplayName(account))}">${escapeHtml(accountDisplayName(account))}</strong>
-        <span>로그인 정보 직접 입력</span>
+        <span>계정별 Chrome에서 직접 로그인</span>
         <small>블로그 ${escapeHtml(account.blogId || account.naverId || "-")}</small>
         <small>카테고리 ${(account.categories || []).length}개</small>
       </div>
       <div class="account-actions">
         ${sessionBadge(account)}
+        <button type="button" class="ghost small" data-action="chrome">Chrome 열기</button>
+        <button type="button" class="ghost small" data-action="pair" ${account.connection?.busy?'disabled':''}>확장 연결 코드</button>
+        ${account.connection?.busy?'<button type="button" class="ghost small" data-action="cancel">대기 취소</button>':''}
+        ${account.connection?.connected?'<button type="button" class="ghost small" data-action="revoke">연결 해제</button>':''}
         <button type="button" class="ghost small" data-action="session">세션확인</button>
         <button type="button" class="select-button small" data-action="select">${account.id === state.accountStore.selectedAccountId ? "선택됨" : "선택"}</button>
         <button type="button" class="ghost small danger-button" data-action="delete">삭제</button>
       </div>
     `;
+    const message=document.createElement('p');message.className='connection-message';message.setAttribute('role','status');message.setAttribute('aria-live','polite');
+    message.textContent=connectionMessages.get(account.id) || account.connection?.reason || 'Chrome 열기 → 확장 설치 → 연결 코드 입력 → 세션확인';row.appendChild(message);
+    for(const action of ['chrome','pair','cancel','revoke']) {
+      const button=row.querySelector('[data-action="'+action+'"]');if(!button)continue;
+      button.addEventListener('click',event=>{
+        event.stopPropagation();runConnectionAction(account.id,button,message,async()=>{
+          if(action==='chrome'){await window.blogAuto.openAccountChrome(account.id);return '계정별 Chrome을 열었습니다. 처음 사용 시 위 설치 안내를 따라 확장을 설치하세요.';}
+          if(action==='pair'){const result=await window.blogAuto.pairExtension(account.id);return '연결 코드: '+result.code+' (10분 동안 유효)\n이 계정의 Chrome에서 Himawari 확장을 열고 입력하세요.';}
+          if(action==='cancel'){await window.blogAuto.cancelExtension(account.id);return '대기를 취소했습니다. 작성 중인 글은 Chrome에서 확인하세요.';}
+          await window.blogAuto.revokeExtension(account.id);return '연결을 해제했습니다. 재연결 시 새 코드를 사용하세요.';
+        });
+      });
+    }
     const dragHandle = row.querySelector(".account-drag-handle");
     dragHandle.addEventListener("click", (event) => event.stopPropagation());
     dragHandle.addEventListener("dragstart", (event) => {
@@ -822,7 +862,8 @@ function renderAccounts() {
     });
     row.querySelector("[data-action='session']").addEventListener("click", (event) => {
       event.stopPropagation();
-      checkAccountSession(account);
+      const button=event.currentTarget;if(connectionBusy.has(account.id+':session'))return;
+      runConnectionAction(account.id+':session',button,message,async()=>{await checkAccountSession(account);return state.accountStore.accounts.find(a=>a.id===account.id)?.connection?.reason || '세션 확인을 마쳤습니다.';});
     });
     row.querySelector("[data-action='delete']").addEventListener("click", async (event) => {
       event.stopPropagation();
@@ -1806,6 +1847,22 @@ async function startTistoryTestPublish() {
 async function boot() {
   const initial = await window.blogAuto.getInitialData();
   populateCodexModels(initial.codexModels);
+  $('#prepareExtensionButton').addEventListener('click',event=>runConnectionAction('setup',event.currentTarget,$('#extensionSetupStatus'),async()=>{
+    const result=await window.blogAuto.prepareExtension();$('#extensionInstallPath').value=result.directory;$('#copyExtensionPathButton').disabled=false;return '확장 '+result.version+' 폴더를 준비했습니다. 계정별 Chrome에서 설치하거나 새로고침하세요.';
+  }));
+  $('#copyExtensionPathButton').addEventListener('click',async()=>{
+    try{await navigator.clipboard.writeText($('#extensionInstallPath').value);$('#extensionSetupStatus').textContent='설치 경로를 복사했습니다.';}catch(error){$('#extensionSetupStatus').textContent='경로 복사 실패: '+error.message;}
+  });
+  for(const [id,action] of [['openTistoryChromeButton','open'],['pairTistoryExtensionButton','pair'],['cancelTistoryExtensionButton','cancel'],['revokeTistoryExtensionButton','revoke']]) {
+    $('#'+id).addEventListener('click',event=>runConnectionAction('tistory',event.currentTarget,$('#tistoryExtensionStatus'),async()=>{
+      const blogId=$('#tistoryBlogId').value.trim();
+      if(action==='open'){await window.blogAuto.openTistoryChrome(blogId);return '티스토리 공용 Chrome을 열었습니다. 확장을 설치하고 로그인하세요.';}
+      if(action==='pair'){const result=await window.blogAuto.pairTistoryExtension(blogId);return '티스토리 연결 코드: '+result.code+' (10분 동안 유효)';}
+      if(action==='cancel'){await window.blogAuto.cancelExtension('tistory-shared');return '티스토리 대기를 취소했습니다.';}
+      await window.blogAuto.revokeExtension('tistory-shared');return '티스토리 연결을 해제했습니다.';
+    }));
+  }
+  refreshExtensionConnections().catch(()=>{});setInterval(()=>refreshExtensionConnections().catch(()=>{}),15000);
   $("#runtimePath").textContent = initial.runtimeRoot;
   state.chrome = initial.chrome || state.chrome;
   state.accountStore = initial.accountStore || state.accountStore;

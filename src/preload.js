@@ -1,6 +1,14 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("blogAuto", {
+  prepareExtension: () => ipcRenderer.invoke("extension:setup"),
+  openAccountChrome: (accountId) => ipcRenderer.invoke("chrome:openAccount", accountId),
+  pairExtension: (accountId) => ipcRenderer.invoke("extension:pair", accountId),
+  extensionConnections: () => ipcRenderer.invoke("extension:connections"),
+  cancelExtension: (accountId) => ipcRenderer.invoke("extension:cancel", accountId),
+  revokeExtension: (accountId) => ipcRenderer.invoke("extension:revoke", accountId),
+  openTistoryChrome: (blogId) => ipcRenderer.invoke("tistory:open", blogId),
+  pairTistoryExtension: (blogId) => ipcRenderer.invoke("tistory:pair", blogId),
   getInitialData: () => ipcRenderer.invoke("app:getInitialData"),
   openChromeInstallAndQuit: () => ipcRenderer.invoke("chrome:installAndQuit"),
   refreshCodexUsage: () => ipcRenderer.invoke("codex:refreshUsage"),

@@ -10,12 +10,16 @@ const { collectSearchResults, collectReferenceSources, normalizeReferenceUrls, s
 const { normalizeProductModel, normalizeProductUrl, resolveProductReference } = require("./lib/productReference");
 const { runCodexGeneration, fetchCodexUsageSnapshot } = require("./lib/codexRunner");
 const { normalizeAgentResult, getPreviewImages } = require("./lib/imageAssets");
-const { publishToNaver, checkNaverSession, verifyOpenNaverSession, naverSessionFailureStatus } = require("./lib/naverPublisher");
-const { publishToTistory, checkTistorySession } = require("./lib/tistoryPublisher");
+const { publishToNaver, checkNaverSession, verifyOpenNaverSession, naverSessionFailureStatus, publishToTistory, checkTistorySession } = require("./lib/desktopPublisher");
+const {configureBridge}=require('./lib/extensionBridge');
+const {openAccountChrome}=require('./lib/chromeLauncher');
+const {prepareExtension}=require('./lib/extensionSetup');
+const {TISTORY_ACCOUNT_ID,tistoryAccount}=require('./lib/tistoryTarget');
 const { ensureSettingsFile, normalizeCodexModel, normalizeImageAspectRatio, normalizeMaxBodyImages, resolveCodexCmdPath, readSettings, writeSettings } = require("./lib/settings");
 const { getAvailableCodexModels } = require("./lib/codexModels");
 const { checkCodexLogin, startCodexLogin } = require("./lib/codexAuth");
 const {
+  revokeChangedConnections,
   ensureAccountStoreFile,
   readAccountStore,
   writeAccountStore,
@@ -23,6 +27,13 @@ const {
   getAccountProfileDir
 } = require("./lib/accountStore");
 
+if(process.env.BLOGAUTO_USER_DATA) {
+  const userData=path.resolve(process.env.BLOGAUTO_USER_DATA);
+  fs.mkdirSync(userData,{recursive:true});app.setPath('userData',userData);
+}
+const ownsAppInstance=app.requestSingleInstanceLock();
+if(!ownsAppInstance)app.quit();
+let desktopBridge;
 let mainWindow;
 let activeJob = null;
 const activeNaverSessions = new Map();
@@ -132,7 +143,8 @@ function withAccountImageUrls(runtimeRoot, store) {
         ...image,
         url: image.path && fs.existsSync(image.path) ? pathToFileURL(image.path).toString() : ""
       }));
-      return { ...account, referenceImages, sampleImageUrl: referenceImages[0]?.url || "" };
+      const connection=desktopBridge?.snapshot(account.id) || {connected:false,status:'disconnected'};
+      return { ...account, referenceImages, connection, sessionStatus:connection.status==='valid'?'valid':['expired','security_check','account_mismatch'].includes(connection.status)?'expired':'unknown',sampleImageUrl: referenceImages[0]?.url || "" };
     })
   };
 }
@@ -263,24 +275,8 @@ async function closeTistorySession(key) {
   await session.context?.close().catch(() => {});
 }
 
-function reusableNaverSession(key) {
-  const session = activeNaverSessions.get(key);
-  if (!session?.context || session.page?.isClosed?.()) {
-    activeNaverSessions.delete(key);
-    return null;
-  }
-  return session;
-}
-
-function reusableTistorySession(key) {
-  const session = activeTistorySessions.get(key);
-  if (!session?.context || session.page?.isClosed?.()) {
-    activeTistorySessions.delete(key);
-    return null;
-  }
-  return session;
-}
-
+function reusableNaverSession() { return null; }
+function reusableTistorySession() { return null; }
 function sanitizeNaverTag(value) {
   return String(value || "")
     .replace(/^#+/, "")
@@ -811,120 +807,29 @@ function createSessionExpiredError(reason = "네이버 세션이 만료되어 �
 }
 
 async function verifyPublishSessionBeforeGeneration({ runtimeRoot, account, blogId, form, settings, jobId }) {
-  const browserProfileDir = getAccountProfileDir(runtimeRoot, account);
-  const sessionKey = sessionKeyFor(account, browserProfileDir);
-  updateStatus(jobId, "publishing", "Naver 글쓰기 편집기 확인");
-  safeLog(jobId, "본문 생성 전 Naver 계정 로그인 세션과 블로그 글쓰기 편집기 화면을 먼저 확인합니다.");
-  safeLog(jobId, `계정 profile: ${browserProfileDir}`);
-  const cached = reusableNaverSession(sessionKey);
-  if (cached) {
-    safeLog(jobId, "열린 브라우저에서 로그인 상태와 글쓰기 편집기를 다시 확인합니다.");
-  }
-
-  let result;
-  try {
-    result = cached ? await verifyOpenNaverSession({
-      blogId,
-      browserProfileDir,
-      preparedContext: cached.context,
-      preparedPage: cached.page,
-      interactiveLogin: true,
-      domNotes: form.naverEditorDomNotes || "",
-      runtimeRoot,
-      log: (message, level) => safeLog(jobId, message, level)
-    }) : await checkNaverSession({
-      blogId,
-      browserProfileDir,
-      interactiveLogin: true,
-      keepOpen: true,
-      requireEditor: true,
-      domNotes: form.naverEditorDomNotes || "",
-      runtimeRoot,
-      log: (message, level) => safeLog(jobId, message, level)
-    });
-  } catch (error) {
-    if (naverSessionFailureStatus(error) && account.id) {
-      updateAccountSession(runtimeRoot, account.id, "expired", settings);
-      emitAccountStore(runtimeRoot);
-    }
+  updateStatus(jobId,'publishing','Chrome 확장 · 네이버 편집기 확인');
+  safeLog(jobId,'본문 생성 전 연결된 Chrome의 로그인·제목 입력 준비를 확인합니다.');
+  const result=await checkNaverSession({accountId:account.id,blogId,interactiveLogin:true,preflightTitle:true,category:form.category});
+  if(result.status!=='valid' || !result.preparedSession) {
+    const error=createSessionExpiredError(result.reason || '네이버 Chrome 연결과 로그인을 확인해 주세요.');
+    if(result.status==='disconnected')error.code='EXTENSION_DISCONNECTED';
     throw error;
   }
-  if (result.preparedSession) {
-    activeNaverSessions.set(sessionKey, result.preparedSession);
-  }
-  if (result.status !== "valid" || !result.preparedSession) {
-    throw createSessionExpiredError("Naver 로그인 세션을 확인하지 못했습니다. 먼저 계정관리에서 세션확인을 완료해 주세요.");
-  }
-
-  if (account.id) {
-    updateAccountSession(runtimeRoot, account.id, "valid", settings);
-    emitAccountStore(runtimeRoot);
-  }
-  const prepared = result.preparedSession;
-  activeNaverSessions.set(sessionKey, prepared);
-  safeLog(jobId, "Naver 글쓰기 편집기 준비 결과를 앱에 저장했습니다.");
-  safeLog(jobId, "Naver 글쓰기 편집기 확인 완료. Research/Title Agent를 시작합니다.");
-  return prepared;
+  updateAccountSession(runtimeRoot,account.id,'valid',settings);emitAccountStore(runtimeRoot);
+  safeLog(jobId,'Naver 글쓰기 편집기 확인 완료. Research/Title Agent를 시작합니다.');
+  return result.preparedSession;
 }
 
 async function verifyTistorySessionBeforeGeneration({ runtimeRoot, form, settings, jobId }) {
-  const tistoryBlogId = String(form.tistoryBlogId || settings.tistoryBlogId || "").trim();
-  const browserProfileDir = getTistoryProfileDir(runtimeRoot, tistoryBlogId);
-  const key = tistorySessionKey(tistoryBlogId, browserProfileDir);
-  updateStatus(jobId, "publishing", "티스토리 편집기 세션 확인");
-  safeLog(jobId, `티스토리 프로필: ${browserProfileDir}`);
-  try {
-    const existingSession = reusableTistorySession(key);
-    if (existingSession) {
-      writeSettings(runtimeRoot, {
-        tistorySessionStatus: "valid",
-        tistorySessionCheckedAt: new Date().toISOString()
-      });
-      safeLog(jobId, "열려 있는 티스토리 편집기 세션을 재사용합니다.");
-      return {
-        status: "valid",
-        reason: "reused_open_tistory_editor",
-        url: existingSession.page?.url?.() || "",
-        browserProfileDir,
-        preparedSession: existingSession,
-        page: existingSession.page
-      };
-    }
-    const result = await checkTistorySession({
-      tistoryBlogId,
-      browserProfileDir,
-      runtimeRoot,
-      failOnLoginRequired: true,
-      keepOpen: true,
-      log: (message, level) => safeLog(jobId, message, level)
-    });
-    if (result.preparedSession) {
-      activeTistorySessions.set(key, result.preparedSession);
-    }
-    writeSettings(runtimeRoot, {
-      tistorySessionStatus: result.status === "valid" ? "valid" : "unknown",
-      tistorySessionCheckedAt: new Date().toISOString()
-    });
-    if (result.status !== "valid") {
-      safeLog(jobId, "티스토리 세션이 유효하지 않습니다. 네이버 발행은 계속 진행하고 티스토리 발행은 건너뜁니다.", "warn");
-      return {
-        status: "expired",
-        reason: "티스토리 발행 전에 카카오 로그인이 필요합니다."
-      };
-    }
-    safeLog(jobId, "티스토리 편집기 세션 확인 완료.");
-    return result;
-  } catch (error) {
-    writeSettings(runtimeRoot, {
-      tistorySessionStatus: "expired",
-      tistorySessionCheckedAt: new Date().toISOString()
-    });
-    safeLog(jobId, `티스토리 세션 확인에 실패했습니다. 네이버 발행은 계속 진행하고 티스토리 발행은 건너뜁니다: ${error.message}`, "warn");
-    return {
-      status: "expired",
-      reason: error.message
-    };
+  const tistoryBlogId=String(form.tistoryBlogId || settings.tistoryBlogId || '').trim();
+  const result=await checkTistorySession({tistoryBlogId,category:form.category,interactiveLogin:true});
+  writeSettings(runtimeRoot,{tistorySessionStatus:result.status==='valid'?'valid':'unknown',tistorySessionCheckedAt:new Date().toISOString()});
+  if(result.status!=='valid') {
+    const error=createSessionExpiredError(result.reason || '티스토리 공용 Chrome의 로그인을 확인해 주세요.');
+    if(result.status==='disconnected')error.code='EXTENSION_DISCONNECTED';
+    throw error;
   }
+  safeLog(jobId,'티스토리 편집기 세션 확인 완료.');return result;
 }
 
 async function startTistoryTestPublish(form = {}) {
@@ -1262,6 +1167,7 @@ async function startJob(form) {
       updateStatus(jobId, "publishing", "Naver pending draft publish resume");
       safeLog(jobId, "이전 작업의 작성 완료 draft를 재사용해 발행만 이어갑니다.", "info");
       await publishToNaver({
+        accountId:account.id,
         blogId,
         category,
         publishPrivate: pendingDraft.publishPrivate ?? publishPrivate,
@@ -1792,6 +1698,7 @@ async function startJob(form) {
     if (shouldPublish) {
       updateStatus(jobId, "publishing", `Naver 블로그 ${publishVisibility === "public" ? "전체공개" : "비공개"} 발행 자동화`);
       await publishToNaver({
+        accountId:account.id,
         accountId: account.id || "",
         blogId,
         category,
@@ -1999,7 +1906,12 @@ async function startJob(form) {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if(!ownsAppInstance)return;
+  desktopBridge=configureBridge(getRuntimeRoot());
+  desktopBridge.on('status',()=>emitAccountStore(getRuntimeRoot()));
+  desktopBridge.on('progress',(accountId,message)=>safeLog(activeJob?.id || 'session',message));
+  try{await desktopBridge.start();}catch(error){dialog.showErrorBox('Chrome 확장 연결 실패',error.message);app.quit();return;}
   ensureRuntimeFiles(getRuntimeRoot());
   ensureSettingsFile(getRuntimeRoot());
   ensureAccountStoreFile(getRuntimeRoot(), readSettings(getRuntimeRoot()));
@@ -2091,7 +2003,9 @@ app.whenReady().then(() => {
   });
   ipcMain.handle("codex:openInstallGuide", () => shell.openExternal("https://learn.chatgpt.com/docs/codex/cli"));
   ipcMain.handle("accounts:save", (_event, store) => {
+    if(activeJob)throw new Error('작업 중에는 계정을 변경할 수 없습니다.');
     const runtimeRoot = getRuntimeRoot();
+    revokeChangedConnections(desktopBridge,readAccountStore(runtimeRoot,readSettings(runtimeRoot)),store);
     const saved = writeAccountStore(runtimeRoot, store, readSettings(runtimeRoot));
     const publicStore = withAccountImageUrls(runtimeRoot, saved);
     emit("accounts:update", publicStore);
@@ -2183,139 +2097,38 @@ app.whenReady().then(() => {
     emit("accounts:update", publicStore);
     return publicStore;
   });
-  ipcMain.handle("accounts:checkSession", async (_event, accountId, options = {}) => {
-    if (activeJob) {
-      throw new Error("작업 실행 중에는 계정 세션을 다시 확인할 수 없습니다.");
+  const accountById=id=>{
+    const account=readAccountStore(getRuntimeRoot(),readSettings(getRuntimeRoot())).accounts.find(a=>a.id===id);
+    if(!account)throw new Error('계정을 찾을 수 없습니다.');return account;
+  };
+  ipcMain.handle('extension:setup',()=>{
+    const source=app.isPackaged?path.join(process.resourcesPath,'extension'):path.join(app.getAppPath(),'extension');
+    const directory=prepareExtension(source,path.join(app.getPath('userData'),'chrome-extension'));
+    return {directory,version:'0.3.17'};
+  });
+  ipcMain.handle('chrome:openAccount',(_event,id)=>openAccountChrome(getRuntimeRoot(),accountById(id),shell));
+  ipcMain.handle('tistory:open',(_event,blogId)=>openAccountChrome(getRuntimeRoot(),tistoryAccount(blogId || readSettings(getRuntimeRoot()).tistoryBlogId),shell));
+  ipcMain.handle('extension:pair',(_event,id)=>{const a=accountById(id);return desktopBridge.pairCode(a.id,a.blogId,a.label);});
+  ipcMain.handle('tistory:pair',(_event,blogId)=>{const a=tistoryAccount(blogId || readSettings(getRuntimeRoot()).tistoryBlogId);return desktopBridge.pairCode(a.id,a.blogId,a.label,'tistory');});
+  ipcMain.handle('extension:connections',()=>({accounts:readAccountStore(getRuntimeRoot()).accounts.map(a=>({accountId:a.id,...desktopBridge.snapshot(a.id)})),tistory:desktopBridge.snapshot(TISTORY_ACCOUNT_ID)}));
+  ipcMain.handle('extension:cancel',(_event,id)=>{desktopBridge.cancelAccount(id);return true;});
+  ipcMain.handle('extension:revoke',(_event,id)=>{desktopBridge.revoke(id);emitAccountStore(getRuntimeRoot());return true;});
+  ipcMain.handle('accounts:checkSession',async(_event,id,options={})=>{
+    if(activeJob)throw new Error('작업 중에는 세션을 다시 확인할 수 없습니다.');
+    const a=accountById(id),root=getRuntimeRoot(),settings=readSettings(root);
+    const result=await checkNaverSession({accountId:a.id,blogId:a.blogId,interactiveLogin:true});
+    updateAccountSession(root,id,result.status==='valid'?'valid':'unknown',settings);emitAccountStore(root);
+    const {preparedSession,...publicResult}=result;
+    if(options.includeTistorySession!==false && settings.publishToTistoryAfterNaver && settings.tistoryBlogId) {
+      const {preparedSession,...session}=await checkTistorySession({tistoryBlogId:settings.tistoryBlogId,interactiveLogin:true});publicResult.tistorySession=session;
     }
-    const runtimeRoot = getRuntimeRoot();
-    const settings = readSettings(runtimeRoot);
-    const store = readAccountStore(runtimeRoot, settings);
-    const account = store.accounts.find((item) => item.id === accountId);
-    if (!account) throw new Error("계정을 찾을 수 없습니다.");
-    const browserProfileDir = getAccountProfileDir(runtimeRoot, account);
-    const key = sessionKeyFor(account, browserProfileDir);
-    safeLog("session", `계정 profile: ${browserProfileDir}`);
-    const existingNaverSession = reusableNaverSession(key);
-    const result = existingNaverSession
-      ? await verifyOpenNaverSession({
-        blogId: account.blogId || account.naverId,
-        browserProfileDir,
-        preparedContext: existingNaverSession.context,
-        preparedPage: existingNaverSession.page,
-        interactiveLogin: true,
-        domNotes: settings.naverEditorDomNotes || "",
-        runtimeRoot,
-        log: (message, level) => safeLog("session", message, level)
-      })
-      : await checkNaverSession({
-        blogId: account.blogId || account.naverId,
-        browserProfileDir,
-        interactiveLogin: true,
-        keepOpen: true,
-        requireEditor: true,
-        domNotes: settings.naverEditorDomNotes || "",
-        runtimeRoot,
-        log: (message, level) => safeLog("session", message, level)
-      });
-    const { preparedSession, page, ...publicResult } = result;
-    if (options.includeTistorySession !== false && settings.publishToTistoryAfterNaver === true && settings.tistoryBlogId) {
-      try {
-        const tistoryProfileDir = getTistoryProfileDir(runtimeRoot, settings.tistoryBlogId);
-        const tistoryKey = tistorySessionKey(settings.tistoryBlogId, tistoryProfileDir);
-        const existingTistorySession = reusableTistorySession(tistoryKey);
-        const tistoryResult = existingTistorySession
-          ? {
-            status: "valid",
-            reason: "reused_open_tistory_editor",
-            url: existingTistorySession.page?.url?.() || "",
-            preparedSession: existingTistorySession
-          }
-          : await checkTistorySession({
-            tistoryBlogId: settings.tistoryBlogId,
-            browserProfileDir: tistoryProfileDir,
-            runtimeRoot,
-            keepOpen: true,
-            log: (message, level) => safeLog("session", message, level)
-          });
-        if (tistoryResult.preparedSession) {
-          activeTistorySessions.set(tistoryKey, tistoryResult.preparedSession);
-        }
-        publicResult.tistorySession = {
-          status: tistoryResult.status,
-          reason: tistoryResult.reason || "",
-          url: tistoryResult.url || ""
-        };
-        writeSettings(runtimeRoot, {
-          tistorySessionStatus: tistoryResult.status === "valid" ? "valid" : "unknown",
-          tistorySessionCheckedAt: new Date().toISOString()
-        });
-      } catch (error) {
-        publicResult.tistorySession = {
-          status: "expired",
-          reason: error.message
-        };
-        writeSettings(runtimeRoot, {
-          tistorySessionStatus: "expired",
-          tistorySessionCheckedAt: new Date().toISOString()
-        });
-      }
-    }
-    const sessionStatus = result.status === "valid"
-      ? "valid"
-      : result.status === "expired"
-        ? "expired"
-        : "unknown";
-    const saved = updateAccountSession(runtimeRoot, account.id, sessionStatus, settings);
-    emit("accounts:update", saved);
-    if (preparedSession) {
-      activeNaverSessions.set(key, preparedSession);
-    }
-    if (result.status !== "valid") {
-      safeLog("session", result.reason && result.reason !== "login_required"
-        ? `네이버 세션 확인 실패: ${result.reason}`
-        : `${account.label || account.blogId || account.naverId} 계정 로그인이 필요합니다. 열린 크롬 창에서 계속 진행해 주세요.`, "warn");
-      return publicResult;
-    }
-    safeLog("session", `${account.label || account.blogId || account.naverId} 계정 글쓰기 편집기 확인 완료.`);
     return publicResult;
   });
-  ipcMain.handle("tistory:checkSession", async (_event, tistoryBlogId) => {
-    if (activeJob) {
-      throw new Error("작업 실행 중에는 티스토리 세션을 확인할 수 없습니다.");
-    }
-    const runtimeRoot = getRuntimeRoot();
-    const settings = readSettings(runtimeRoot);
-    const selectedBlogId = String(tistoryBlogId || settings.tistoryBlogId || "").trim();
-    const browserProfileDir = getTistoryProfileDir(runtimeRoot, selectedBlogId);
-    const key = tistorySessionKey(selectedBlogId, browserProfileDir);
-    const existingTistorySession = reusableTistorySession(key);
-    const result = existingTistorySession
-      ? {
-        status: "valid",
-        reason: "reused_open_tistory_editor",
-        url: existingTistorySession.page?.url?.() || "",
-        preparedSession: existingTistorySession
-      }
-      : await checkTistorySession({
-        tistoryBlogId: selectedBlogId,
-        browserProfileDir,
-        runtimeRoot,
-        keepOpen: true,
-        log: (message, level) => safeLog("session", message, level)
-      });
-    if (result.preparedSession) {
-      activeTistorySessions.set(key, result.preparedSession);
-    }
-    writeSettings(runtimeRoot, {
-      tistoryBlogId: selectedBlogId,
-      tistorySessionStatus: result.status === "valid" ? "valid" : "unknown",
-      tistorySessionCheckedAt: new Date().toISOString()
-    });
-    return {
-      status: result.status,
-      reason: result.reason || "",
-      url: result.url || ""
-    };
+  ipcMain.handle('tistory:checkSession',async(_event,blogId)=>{
+    if(activeJob)throw new Error('작업 중에는 세션을 다시 확인할 수 없습니다.');
+    const root=getRuntimeRoot(),settings=readSettings(root);
+    const {preparedSession,...result}=await checkTistorySession({tistoryBlogId:blogId || settings.tistoryBlogId,interactiveLogin:true});
+    writeSettings(root,{tistorySessionStatus:result.status==='valid'?'valid':'unknown',tistorySessionCheckedAt:new Date().toISOString()});return result;
   });
   ipcMain.handle("tistory:testPublish", (_event, form) => startTistoryTestPublish(form));
   ipcMain.handle("history:load", () => readHistory(getRuntimeRoot()));
@@ -2373,8 +2186,11 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  desktopBridge?.stop();
   for (const session of activeNaverSessions.values()) {
     session.context?.close().catch(() => {});
   }
   activeNaverSessions.clear();
 });
+
+app.on('second-instance',()=>{if(mainWindow){if(mainWindow.isMinimized())mainWindow.restore();mainWindow.focus();}});

@@ -76,9 +76,10 @@ class ExtensionBridge extends EventEmitter {
   }
   checkDisconnectedTasks() {
     for(const task of this.tasks.values()) {
-      if(task.state!=='running' || task.waiting || Date.now()-(this.lastSeen.get(task.clientToken)||0)<120000)continue;
+      if(task.state!=='running' || Date.now()-(this.lastSeen.get(task.clientToken)||0)<120000)continue;
       task.state='interrupted';this.saveTasks();const waiter=this.waiters.get(task.id);
       if(waiter){clearTimeout(waiter.timer);this.waiters.delete(task.id);waiter.reject(failure('확장 연결이 끊겼습니다. 작성된 글과 발행 여부를 확인하세요.',task.stage==='final_publish'?'PUBLISH_UNCERTAIN':'EXTENSION_DISCONNECTED'));}
+      this.emit('status',task.accountId,this.snapshot(task.accountId));
     }
   }
   async request(accountId, type, payload = {}, timeoutMs = 0) {
@@ -111,6 +112,7 @@ class ExtensionBridge extends EventEmitter {
       this.waiters.set(id,{ resolve,reject,timer });
     });
     this.waiters.get(id).promise = promise;
+    this.emit('status',accountId,this.snapshot(accountId));
     return promise;
   }
   reply(res, status, value) { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); }

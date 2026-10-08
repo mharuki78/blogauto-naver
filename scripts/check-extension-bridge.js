@@ -74,6 +74,16 @@ test('revoke invalidates unspent pairing codes and affects only that account',as
  assert.equal((await call(bridge,'/pair',{code,deviceId:'device-new-01234567890123456789'})).status,403);
  assert.equal((await call(bridge,'/heartbeat',{},b)).status,200);
 });
+test('waiting for login does not strand a task after Chrome disconnects',async t=>{
+ const {bridge,pair}=await fixture(t);const token=await pair('a');
+ const promise=bridge.request('a','session',{interactive:true});promise.catch(()=>{});
+ assert.equal(bridge.snapshot('a').busy,true);
+ const task=(await call(bridge,'/poll',{},token)).body.task;
+ await call(bridge,'/waiting',{id:task.id,status:'expired',reason:'login required'},token);
+ bridge.lastSeen.set(token,Date.now()-130000);bridge.checkDisconnectedTasks();
+ await assert.rejects(promise,{code:'EXTENSION_DISCONNECTED'});
+ assert.equal(bridge.snapshot('a').busy,false);
+});
 test('launcher separates stable account profiles and opens ordinary Chrome via shortcut',async t=>{
  const {root}=await fixture(t);const a=launchSpec(root,{id:'acct1',blogId:'foo'},'win32','C:/chrome.exe');
  const same=launchSpec(root,{id:'acct1',blogId:'foo'},'win32','C:/chrome.exe');

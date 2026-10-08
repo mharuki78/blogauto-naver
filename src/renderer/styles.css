@@ -672,6 +672,18 @@ textarea {
   gap: 8px;
 }
 
+.account-row { display:grid; grid-template-columns:28px 16px minmax(0,1fr); align-items:start; }
+.account-actions, .connection-message { grid-column:1 / -1; min-width:0; }
+.account-actions { justify-content:flex-start; }
+.account-actions button, .extension-install button { min-height:44px; }
+.connection-message { margin:0; font-size:12px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--muted); }
+.extension-install { padding:10px; border:1px solid var(--border); border-radius:6px; }
+.extension-install summary { cursor:pointer; padding:6px 0; font-weight:600; }
+.extension-install p, .extension-install li { font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+.extension-install ol { padding-left:20px; }
+.extension-install [role="status"] { white-space:pre-wrap; }
+button:focus-visible, summary:focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
+
 .manager-head {
   justify-content: space-between;
 }

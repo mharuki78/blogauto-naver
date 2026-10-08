@@ -39,7 +39,7 @@ async function tistoryCommand(command,args={}) {
     }
     if(!editor || !document.querySelector('#post-title-inp'))return {status:'unknown',reason:'티스토리 글쓰기 화면 또는 로그인·권한 안내를 확인하세요.'};
     const images=()=>editor.getContent().match(/\[##_Image\|[\s\S]*?_##\]/g)||[];
-    if(command==='inspect')return {ok:true,status:'valid',editorBuild:'20260928.3',reason:'티스토리 글쓰기 권한 확인 완료 · 탭 재사용 수정본 20260928.3'};
+    if(command==='inspect')return {ok:true,status:'valid',blogId:args.blogId,editorBuild:'20261008.1',reason:'티스토리 글쓰기 권한 확인 완료 · 탭 재사용 수정본 20260928.3'};
     if(command==='preflight'){
       if(args.category){
         const select=document.querySelector('#category-btn');if(!select)throw new Error('티스토리 카테고리를 확인할 수 없습니다.');

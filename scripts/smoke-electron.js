@@ -11,6 +11,11 @@ const path = require("node:path");
   const smokeSampleImagePath = path.join(smokeAssetDir, "sample.png");
   const uploadOnePath = path.join(smokeRuntimeRoot, "upload-one.png");
   const uploadTwoPath = path.join(smokeRuntimeRoot, "upload-two.png");
+  const allowedRoot=path.resolve(__dirname,'..','runtime');
+  for(const target of [smokeRuntimeRoot,screenshotDir]) {
+    const relative=path.relative(allowedRoot,target);
+    if(!relative || relative.startsWith('..') || path.isAbsolute(relative))throw new Error('Smoke cleanup target leaves project runtime');
+  }
   fs.rmSync(smokeRuntimeRoot, { recursive: true, force: true });
   fs.rmSync(screenshotDir, { recursive: true, force: true });
   fs.mkdirSync(smokeRuntimeRoot, { recursive: true });
@@ -23,6 +28,7 @@ const path = require("node:path");
     env: {
       ...process.env,
       BLOGAUTO_SKIP_CODEX_USAGE_REFRESH: "1",
+      BLOGAUTO_USER_DATA: userDataDir,
       BLOGAUTO_RUNTIME_ROOT: smokeRuntimeRoot
     }
   });
@@ -39,6 +45,11 @@ const path = require("node:path");
     const checks = [
       ["title", "Himawari Blog Automator - Made by Hyunjin"],
       ["blog id", "#blogId"],
+      ["product model", "#productModel"],
+      ["Himawari logo", ".brand-logo"],
+      ["extension folder", "#prepareExtensionButton"],
+      ["extension installation path", "#extensionInstallPath"],
+      ["Tistory Chrome", "#openTistoryChromeButton"],
       ["manual login guidance", ".account-login-guidance"],
       ["startup notice", "#startupNotice"],
       ["dismiss startup notice", "#dismissStartupNoticeButton"],
@@ -90,6 +101,17 @@ const path = require("node:path");
       }
     }
     await window.waitForFunction(() => document.querySelector("#codexLoginStatus")?.textContent !== "AI 계정 확인 중");
+    if(!await window.locator('#codexModel option[value="gpt-6.1-sol"]').count())throw new Error('GPT-6.1 Sol option missing');
+    await window.evaluate(()=>{
+      localStorage.setItem('blogauto.startupNotice.dismissed.v2','true');
+      document.querySelector('#startupNotice').hidden=true;
+    });
+    await window.locator('details.extension-install summary').click();
+    await window.locator('#prepareExtensionButton').click();
+    await window.waitForFunction(()=>Boolean(document.querySelector('#extensionInstallPath')?.value));
+    const installPath=await window.locator('#extensionInstallPath').inputValue();
+    if(!installPath.startsWith(userDataDir+path.sep))throw new Error('Extension setup escaped isolated userData');
+    await window.locator('details.extension-install summary').click();
 
     if (await window.locator("#naverId, #naverPassword").count()) {
       throw new Error("Naver credential fields must not be present.");
@@ -257,6 +279,11 @@ const path = require("node:path");
     if (await window.locator("#referenceImagePreview img").count() !== 1) {
       throw new Error("The uploaded image is not shown in the image-generation reference panel.");
     }
+    const accountRow=window.locator('.account-row').filter({hasText:'Smoke Delete Account'});
+    if(!await accountRow.locator('[data-action="chrome"]').count())throw new Error('Account Chrome control missing');
+    await accountRow.locator('[data-action="pair"]').click();
+    await window.waitForFunction(()=>/연결 코드: [A-F0-9]{10}/.test(document.querySelector('.connection-message')?.textContent || ''));
+    await window.locator('.input-panel').evaluate(e=>e.scrollTop=0);
     await window.screenshot({ path: path.join(screenshotDir, "manual-login-account-ui.png") });
     console.log("Manual-login account UI captured.");
     await app.evaluate(({ dialog }, filePaths) => {
