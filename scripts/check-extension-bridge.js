@@ -84,6 +84,16 @@ test('waiting for login does not strand a task after Chrome disconnects',async t
  await assert.rejects(promise,{code:'EXTENSION_DISCONNECTED'});
  assert.equal(bridge.snapshot('a').busy,false);
 });
+test('invalid publication proof is acknowledged as uncertain and final stage cannot move backward',async t=>{
+ const {bridge,pair}=await fixture(t);const token=await pair('a');
+ const promise=bridge.request('a','publish',{title:'제목',article:'본문',publishVisibility:'public'});promise.catch(()=>{});
+ const task=(await call(bridge,'/poll',{},token)).body.task;
+ await call(bridge,'/stage',{id:task.id,stage:'final_publish'},token);
+ assert.equal((await call(bridge,'/stage',{id:task.id,stage:'writing'},token)).status,400);
+ assert.equal((await call(bridge,'/result',{id:task.id,result:{published:true,url:'https://blog.naver.com/other/123'}},token)).status,200);
+ await assert.rejects(promise,{code:'PUBLISH_UNCERTAIN'});
+ assert.equal(bridge.tasks.get(task.id).code,'PUBLISH_UNCERTAIN');
+});
 test('launcher separates stable account profiles and opens ordinary Chrome via shortcut',async t=>{
  const {root}=await fixture(t);const a=launchSpec(root,{id:'acct1',blogId:'foo'},'win32','C:/chrome.exe');
  const same=launchSpec(root,{id:'acct1',blogId:'foo'},'win32','C:/chrome.exe');

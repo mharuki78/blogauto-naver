@@ -21,6 +21,7 @@ function walk(dir) {
 
 walk(path.join(root, "src"));
 walk(path.join(root, "scripts"));
+walk(path.join(root, "extension"));
 
 let failed = false;
 for (const file of targets) {
@@ -272,6 +273,9 @@ if (completedImageRetryIssue) {
   console.error(`src/lib/codexRunner.js: successful prior images must survive a partial retry merge: ${completedImageRetryIssue}`);
 }
 
+const extensionChecks=spawnSync(process.execPath,['--test','scripts/check-extension-bridge.js','scripts/check-extension-editor.js','scripts/check-extension-desktop.js','scripts/check-desktop-publishing.js'],{cwd:root,encoding:'utf8'});
+process.stdout.write(extensionChecks.stdout || '');process.stderr.write(extensionChecks.stderr || '');
+if(extensionChecks.status!==0)failed=true;
 if (failed) {
   process.exit(1);
 }
@@ -2166,7 +2170,7 @@ if (!sourceFiles.rendererApp.content.includes("wakeAutoDelay();")) {
   failed = true;
   console.error("src/renderer/app.js: successful session confirmation must wake the auto loop");
 }
-if (!sourceFiles.main.content.includes("blogId: account.blogId || account.naverId")) {
+if (!sourceFiles.main.content.includes("checkNaverSession({accountId:a.id,blogId:a.blogId")) {
   failed = true;
   console.error("src/main.js: account session check must use blogId for postwrite URL when present");
 }

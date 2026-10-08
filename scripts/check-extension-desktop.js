@@ -69,3 +69,15 @@ test('actual desktop IPC reports old valid account disconnected and blocks model
  for(const name of ['extension:setup','extension:pair','extension:cancel','extension:revoke','chrome:openAccount','tistory:open','tistory:pair','extension:connections','codex:startLogin','accounts:chooseSampleImage','settings:save'])assert.equal(typeof handlers.get(name),'function',name);
  assert.ok(initial.codexModels.some(m=>(m.value||m.id||m)==='gpt-6.1-sol'));
 });
+test('legacy pending article blocks fresh generation until explicit manual archive preserves it',async t=>{
+ const {root,handlers,generated}=await mainFixture(t);
+ const {writeSettings,readSettings}=require('../src/lib/settings');
+ const draft={accountId:'a',blogId:'foo',title:'이전 원고',article:'기존 본문',bodyImages:[],status:'pending_naver_publish'};
+ writeSettings(root,{pendingNaverPublishDraft:draft});
+ const result=await handlers.get('job:start')(null,{accountId:'a',blogId:'foo',category:'정보',keyword:'배드민턴',productModel:'V3',topic:'정보',topicMode:'manual',publishAfterGenerate:true});
+ assert.equal(result.status,'publish_uncertain');assert.equal(generated(),0);
+ assert.equal((await handlers.get('pending:get')()).article,'기존 본문');
+ const archived=await handlers.get('pending:archive')();
+ assert.equal(JSON.parse(fs.readFileSync(archived.file)).article,'기존 본문');
+ assert.equal(readSettings(root).pendingNaverPublishDraft,null);
+});

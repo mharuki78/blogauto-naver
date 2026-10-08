@@ -106,12 +106,12 @@ const path = require("node:path");
       localStorage.setItem('blogauto.startupNotice.dismissed.v2','true');
       document.querySelector('#startupNotice').hidden=true;
     });
-    await window.locator('details.extension-install summary').click();
+    await window.locator('details.extension-install summary').first().click();
     await window.locator('#prepareExtensionButton').click();
     await window.waitForFunction(()=>Boolean(document.querySelector('#extensionInstallPath')?.value));
     const installPath=await window.locator('#extensionInstallPath').inputValue();
     if(!installPath.startsWith(userDataDir+path.sep))throw new Error('Extension setup escaped isolated userData');
-    await window.locator('details.extension-install summary').click();
+    await window.locator('details.extension-install summary').first().click();
 
     if (await window.locator("#naverId, #naverPassword").count()) {
       throw new Error("Naver credential fields must not be present.");
@@ -280,6 +280,7 @@ const path = require("node:path");
       throw new Error("The uploaded image is not shown in the image-generation reference panel.");
     }
     const accountRow=window.locator('.account-row').filter({hasText:'Smoke Delete Account'});
+    if(await accountRow.locator('.account-main').evaluate(e=>e.getBoundingClientRect().width)<150)throw new Error('Account identity column is too narrow to read');
     if(!await accountRow.locator('[data-action="chrome"]').count())throw new Error('Account Chrome control missing');
     await accountRow.locator('[data-action="pair"]').click();
     await window.waitForFunction(()=>/연결 코드: [A-F0-9]{10}/.test(document.querySelector('.connection-message')?.textContent || ''));
@@ -406,6 +407,17 @@ const path = require("node:path");
       throw new Error(`Research-stage auto retry should stop after 2 attempts, got ${researchRetryCalls}.`);
     }
     console.log("Research retry flow passed.");
+    const uncertainCalls=await window.evaluate(async()=>{
+      const hooks=window.__blogAutoTestHooks;let count=0;
+      window.__blogAutoTestHooks={...(hooks || {}),startJob:async()=>{count++;return {status:'publish_uncertain',reason:'게시 여부 확인 필요'};}};
+      try{await window.startAutoPublishing();}finally{if(hooks)window.__blogAutoTestHooks=hooks;else delete window.__blogAutoTestHooks;}
+      return count;
+    });
+    if(uncertainCalls!==1)throw new Error('Uncertain publication was automatically retried');
+    await window.locator('#publishVisibility').selectOption('draft');
+    if(!await window.locator('#publishToTistoryAfterNaver').isDisabled())throw new Error('Naver draft mode allowed Tistory publication');
+    await window.locator('#publishVisibility').selectOption('private');
+    console.log('Uncertain publication stops automatic repetition; draft mode verified.');
     await window.locator("#accountLabel").fill("Smoke Edited Account");
     await window.locator("#updateAccountButton").click();
     await window.waitForFunction(() => (

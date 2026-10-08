@@ -232,12 +232,12 @@ function generationSessionCheck(cache, overrides = {}, throughJob = false) {
     runJobPrelude`, sandbox);
 }
 
-test("generation verifies a preserved cached browser before using it", async () => {
+test("generation always requests fresh session evidence even with an old cached browser", async () => {
   const { context, page, visits } = await fixture(() => ({ body: editorHtml }));
   const cache = new Map([["account", { context, page }]]);
   try {
     await page.goto(home);
-    const check = generationSessionCheck(cache);
+    const check = generationSessionCheck(cache,{checkNaverSession:async options=>verifyOpenNaverSession({...options,preparedContext:context,preparedPage:page})});
     const result = await check({ runtimeRoot, account: { id: "account" }, blogId: "test-blog", form: {}, settings: {}, jobId: "test" });
     assert.equal(result.page.url(), target, "generation must wait for the target editor, even when Chrome is cached");
     assert.ok(visits.includes(target));
@@ -255,7 +255,7 @@ test("generation retains a failed login window for the next session check", asyn
     });
     await assert.rejects(() => check({ runtimeRoot, account: { id: "account" }, blogId: "test-blog", form: {}, settings: {}, jobId: "test" }),
       (error) => error.code === "SESSION_EXPIRED");
-    assert.ok(cache.get("account")?.context === context, "a kept-open profile must retain its context for retry");
+    assert.equal(cache.has('account'),false,"desktop connection checks must not retain Playwright contexts");
     assert.equal(page.isClosed(), false);
   } finally { await context.close(); }
 });
@@ -271,6 +271,6 @@ test("the job failure handler also preserves the interactive login window", asyn
     const result = await run({ runtimeRoot, account: { id: "account" }, blogId: "test-blog", form: {}, settings: {}, jobId: "test" });
     assert.equal(result.status, "session_expired");
     assert.equal(page.isClosed(), false, "the job catch must leave manual login available");
-    assert.ok(cache.get("account")?.context === context);
+    assert.equal(cache.has('account'),false);
   } finally { await context.close(); }
 });

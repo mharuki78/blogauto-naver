@@ -52,7 +52,7 @@ async function publish(options,platform) {
   return result;
 }
 function naverSessionFailureStatus(error) {
-  const codes={EXTENSION_DISCONNECTED:'extension_disconnected',ACCOUNT_TARGET_CHANGED:'extension_disconnected',EXTENSION_UPDATE_REQUIRED:'extension_update_required',SESSION_EXPIRED:'session_expired',NAVER_PREFLIGHT_FAILED:'session_expired',TISTORY_PREFLIGHT_FAILED:'session_expired',EDITOR_PREPARATION_FAILED:'session_expired',PUBLISH_UNCERTAIN:'publish_uncertain'};
+  const codes={JOB_CANCELLED:'job_cancelled',EXTENSION_DISCONNECTED:'extension_disconnected',ACCOUNT_TARGET_CHANGED:'extension_disconnected',EXTENSION_UPDATE_REQUIRED:'extension_update_required',SESSION_EXPIRED:'session_expired',NAVER_PREFLIGHT_FAILED:'session_expired',TISTORY_PREFLIGHT_FAILED:'session_expired',EDITOR_PREPARATION_FAILED:'session_expired',PUBLISH_UNCERTAIN:'publish_uncertain'};
   return codes[error?.code] || '';
 }
 module.exports={checkNaverSession,verifyOpenNaverSession:checkNaverSession,publishToNaver:(o={})=>publish(o,'naver'),checkTistorySession,publishToTistory:(o={})=>publish(o,'tistory'),requireCompatibleEditor,naverSessionFailureStatus,scheduledAt,MIN_EDITOR_BUILD};

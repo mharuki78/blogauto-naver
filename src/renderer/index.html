@@ -107,6 +107,15 @@
               <ol><li>아래 계정의 <b>Chrome 열기</b>를 누릅니다.</li><li>그 창에서 <code>chrome://extensions</code> → 개발자 모드 → 압축해제된 확장 프로그램 로드를 선택하고 위 폴더를 지정합니다.</li><li><b>확장 연결 코드</b>를 발급받고 Chrome 도구 모음의 Himawari 확장에 입력합니다.</li><li>네이버에서 직접 로그인한 후 <b>세션확인</b>을 누릅니다.</li></ol>
               <p id="extensionSetupStatus" role="status" aria-live="polite"></p>
             </details>
+            <details class="extension-install wide" id="pendingDraftControls" hidden>
+              <summary>보류 원고 처리</summary>
+              <p id="pendingDraftStatus" role="status"></p>
+              <p>Chrome에서 네이버·티스토리 게시 여부를 먼저 확인하세요. 불확실한 원고는 자동으로 다시 게시하지 않습니다.</p>
+              <div class="button-row">
+                <button id="viewPendingDraftButton" type="button" class="ghost">보류 원고 보기</button>
+                <button id="archivePendingDraftButton" type="button" class="ghost">게시 확인 후 원고 보관 · 보류 해제</button>
+              </div>
+            </details>
             <div class="manager-block wide">
               <div class="manager-head">
                 <strong>계정 관리</strong>
@@ -277,6 +286,7 @@
                 <select id="publishVisibility">
                   <option value="public">전체공개</option>
                   <option value="private">비공개</option>
+                  <option value="draft">네이버 임시저장</option>
                 </select>
               </label>
               <label>

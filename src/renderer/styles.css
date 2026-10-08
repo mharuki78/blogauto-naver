@@ -672,7 +672,11 @@ textarea {
   gap: 8px;
 }
 
-.account-row { display:grid; grid-template-columns:28px 16px minmax(0,1fr); align-items:start; }
+.account-row { display:grid; grid-template-columns:28px 16px minmax(0,1fr); grid-template-areas:"drag check main" "actions actions actions" "message message message"; align-items:start; }
+.account-row .drag-handle { grid-area:drag; }
+.account-row .account-main { grid-area:main; }
+.account-row .account-actions { grid-area:actions; justify-content:flex-start; min-width:0; }
+.account-row .connection-message { grid-area:message; }
 .account-actions, .connection-message { grid-column:1 / -1; min-width:0; }
 .account-actions { justify-content:flex-start; }
 .account-actions button, .extension-install button { min-height:44px; }

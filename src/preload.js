@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("blogAuto", {
   prepareExtension: () => ipcRenderer.invoke("extension:setup"),
+  getPendingDraft: () => ipcRenderer.invoke("pending:get"),
+  archivePendingDraft: () => ipcRenderer.invoke("pending:archive"),
   openAccountChrome: (accountId) => ipcRenderer.invoke("chrome:openAccount", accountId),
   pairExtension: (accountId) => ipcRenderer.invoke("extension:pair", accountId),
   extensionConnections: () => ipcRenderer.invoke("extension:connections"),

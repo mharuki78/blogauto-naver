@@ -173,6 +173,11 @@ function setRunState(status, detail = "") {
     codex_usage_limit: "한도초과",
     codex_exec_failed: "Codex실패",
     session_expired: "세션만료",
+    extension_disconnected:'확장 미연결',
+    extension_update_required:'확장 업데이트 필요',
+    publish_uncertain:'게시 확인 필요',
+    job_cancelled:'취소됨',
+    checked_archived:'원고 보관됨',
     naver_protected: "보호조치",
     naver_verification_required: "인증 필요",
     duplicate_retry: "중복",
@@ -350,6 +355,16 @@ function sessionBadge(account) {
   return `<span class="badge ${className}">${label}</span>`;
 }
 
+async function refreshPendingDraft() {
+  const draft=await window.blogAuto.getPendingDraft();
+  $('#pendingDraftControls').hidden=!draft;
+  if(draft) {
+    const labels={running:'진행 중',uncertain:'게시 확인 필요',failed:'실패 · 재개 가능',done:'완료'};
+    const results=Object.entries(draft.publications || {}).map(([name,result])=>(name==='naver'?'네이버':'티스토리')+': '+(labels[result.status] || result.status)).join(', ');
+    $('#pendingDraftStatus').textContent=draft.title+' · '+(results || '이전 버전 원고 · 게시 상태 확인 필요');
+  }
+  return draft;
+}
 function updateSessionNotice() {
   const notice = $("#sessionNotice");
   const text = $("#sessionNoticeText");
@@ -1465,6 +1480,9 @@ function scheduleSettingsSave() {
 
 function updateModeControls() {
   const isAuto = $("#topicMode").value === "auto";
+  const isDraft=$("#publishVisibility").value==='draft';
+  if(isDraft)$('#publishToTistoryAfterNaver').checked=false;
+  $('#publishToTistoryAfterNaver').disabled=isDraft;
   const isPrivatePublish = $("#publishVisibility").value !== "public";
   $("#repeatTermLabel").style.display = isAuto ? "grid" : "none";
   $("#manualTopicLabel").style.display = isAuto ? "none" : "grid";
@@ -1678,6 +1696,9 @@ async function startAutoPublishing(startTargetKey = "") {
         excludedKeywordLanes: [...excludedKeywordLanes],
         failOnLoginRequired: true
       }));
+      if(['publish_uncertain','extension_disconnected','extension_update_required','job_cancelled'].includes(result?.status)) {
+        addLog({level:'warn',message:autoResultReason(result),at:new Date().toISOString()});state.autoRunning=false;setRunState(result.status);break autoLoop;
+      }
       if (["naver_protected", "naver_verification_required"].includes(result?.status)) {
         addLog({ level: "warn", message: autoResultReason(result), at: new Date().toISOString() });
         state.autoRunning = false;
@@ -1847,6 +1868,18 @@ async function startTistoryTestPublish() {
 async function boot() {
   const initial = await window.blogAuto.getInitialData();
   populateCodexModels(initial.codexModels);
+  refreshPendingDraft().catch(()=>{});
+  $('#viewPendingDraftButton').addEventListener('click',async()=>{
+    const draft=await refreshPendingDraft();if(!draft)return;
+    $('#selectedTitle').textContent=draft.title;$('#articlePreview').value=draft.article;renderImages(draft.images || []);
+  });
+  $('#archivePendingDraftButton').addEventListener('click',async event=>{
+    if(!window.confirm('Chrome에서 모든 대상 블로그의 게시 여부를 확인했나요? 보류 원고를 파일로 보관하고 보류를 해제합니다. 이후 새 작업을 시작할 수 있습니다.'))return;
+    runConnectionAction('pending',event.currentTarget,$('#pendingDraftStatus'),async()=>{
+      const result=await window.blogAuto.archivePendingDraft();await refreshPendingDraft();
+      if(result)addLog({level:'info',message:'보류 원고 보관: '+result.file,at:new Date().toISOString()});return '보류 원고를 보관했습니다.';
+    });
+  });
   $('#prepareExtensionButton').addEventListener('click',event=>runConnectionAction('setup',event.currentTarget,$('#extensionSetupStatus'),async()=>{
     const result=await window.blogAuto.prepareExtension();$('#extensionInstallPath').value=result.directory;$('#copyExtensionPathButton').disabled=false;return '확장 '+result.version+' 폴더를 준비했습니다. 계정별 Chrome에서 설치하거나 새로고침하세요.';
   }));
@@ -1909,6 +1942,7 @@ async function boot() {
     $("#articleMeta").textContent = payload.verdict || payload.status || "제목 선정 완료";
   });
   window.blogAuto.onComplete((payload) => {
+    refreshPendingDraft().catch(()=>{});
     if (!state.autoRunning) {
       state.running = false;
       $("#startButton").disabled = false;

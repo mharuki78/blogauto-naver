@@ -12,6 +12,8 @@ const { runCodexGeneration, fetchCodexUsageSnapshot } = require("./lib/codexRunn
 const { normalizeAgentResult, getPreviewImages } = require("./lib/imageAssets");
 const { publishToNaver, checkNaverSession, verifyOpenNaverSession, naverSessionFailureStatus, publishToTistory, checkTistorySession } = require("./lib/desktopPublisher");
 const {configureBridge}=require('./lib/extensionBridge');
+const {publishSequence}=require('./lib/publishSequence');
+const {recoverPendingPublication,confirmedPublication,publicationContext}=require('./lib/publishRecovery');
 const {openAccountChrome}=require('./lib/chromeLauncher');
 const {prepareExtension}=require('./lib/extensionSetup');
 const {TISTORY_ACCOUNT_ID,tistoryAccount}=require('./lib/tistoryTarget');
@@ -341,6 +343,8 @@ function buildPendingNaverPublishDraft({
   if (!agentResult?.title || !agentResult?.article) return null;
   return {
     status: "pending_naver_publish",
+    publications: {},
+    publicationSchemaVersion: 1,
     referencePolicyVersion: "informational-product-footer-v4",
     jobId,
     createdAt: new Date().toISOString(),
@@ -371,6 +375,20 @@ function buildPendingNaverPublishDraft({
     sourceSummary: researchTitleResult?.searchFlowSummary || "",
     tokenTotal: Number(tokenUsage?.total || 0)
   };
+}
+
+async function publishStoredDraft(draft,{runtimeRoot,jobId}) {
+  const save=async state=>{writeSettings(runtimeRoot,{pendingNaverPublishDraft:state});};
+  let state=draft;
+  if(!state.publications || Object.values(state.publications).some(p=>['running','uncertain'].includes(p.status)))state=await recoverPendingPublication(state,{bridge:desktopBridge,save,log:message=>safeLog(jobId,message)});
+  try{return await publishSequence(state,{save,log:message=>safeLog(jobId,message),
+    naver:pending=>publishToNaver({...pending,log:(message,level)=>safeLog(jobId,message,level)}),
+    tistory:pending=>publishToTistory({...pending,log:(message,level)=>safeLog(jobId,message,level)})});}
+  catch(error){
+    const pending=readSettings(runtimeRoot).pendingNaverPublishDraft;
+    if(pending?.publications?.naver?.status==='done' && pending?.publications?.tistory?.status!=='done')safeLog(jobId,`네이버 발행은 완료됐지만 티스토리 발행에 실패했습니다: ${error.message}`,'warn');
+    throw error;
+  }
 }
 
 function normalizeKeywordLane(value) {
@@ -1000,6 +1018,9 @@ async function startJob(form) {
     activeJob = null;
     throw new Error("티스토리 발행에는 블로그 ID가 필요합니다.");
   }
+  if(publishVisibility==='draft' && publishToTistoryAfterNaver) {
+    activeJob=null;throw new Error('네이버 임시저장 모드에서는 티스토리 동시 발행을 해제해 주세요.');
+  }
   if (shouldPublish) {
     safeLog(jobId, `Naver 블로그 주소 ID: ${blogId} (로그인은 열린 Chrome에서 직접 입력)`);
   }
@@ -1011,7 +1032,10 @@ async function startJob(form) {
   let latestTagsForResume = [];
   try {
     if (shouldPublish) {
-      preparedNaverSession = await verifyPublishSessionBeforeGeneration({
+      const pending=settings.pendingNaverPublishDraft;
+      if(pending && (!pending.publications || pending.referencePolicyVersion!=='informational-product-footer-v4' || !pendingDraftMatches(pending,{account,blogId,category,topic:form.topicMode==='auto'?'':String(form.topic || '').trim(),productModel,productSiteUrl,productDetailUrl})))throw Object.assign(new Error('보류 원고의 게시 상태를 먼저 확인하세요. 원고를 보존하고 새 생성을 중지했습니다. 보류 원고 처리에서 확인 후 해제할 수 있습니다.'),{code:'PUBLISH_UNCERTAIN'});
+      const naverDone=pending?.publications?.naver?.status==='done' && confirmedPublication(pending.publications.naver,publicationContext(pending,'naver'));
+      if(!naverDone)preparedNaverSession = await verifyPublishSessionBeforeGeneration({
         runtimeRoot,
         account,
         blogId,
@@ -1019,8 +1043,9 @@ async function startJob(form) {
         settings,
         jobId
       });
-      browserProfileDir = preparedNaverSession.browserProfileDir || browserProfileDir;
-      if (tistoryPublishReady) {
+      browserProfileDir = preparedNaverSession?.browserProfileDir || browserProfileDir;
+      const tistoryDone=pending?.publications?.tistory?.status==='done' && confirmedPublication(pending.publications.tistory,publicationContext(pending,'tistory'));
+      if (tistoryPublishReady && !tistoryDone) {
         const tistorySession = await verifyTistorySessionBeforeGeneration({
           runtimeRoot,
           form,
@@ -1166,75 +1191,9 @@ async function startJob(form) {
     try {
       updateStatus(jobId, "publishing", "Naver pending draft publish resume");
       safeLog(jobId, "이전 작업의 작성 완료 draft를 재사용해 발행만 이어갑니다.", "info");
-      await publishToNaver({
-        accountId:account.id,
-        blogId,
-        category,
-        publishPrivate: pendingDraft.publishPrivate ?? publishPrivate,
-        publishVisibility: pendingDraft.publishVisibility || publishVisibility,
-        publishScheduleMode: pendingDraft.publishScheduleMode || publishScheduleMode,
-        reserveAfterHours: Number(pendingDraft.reserveAfterHours ?? reserveAfterHours),
-        failOnLoginRequired: form.failOnLoginRequired === true,
-        title: resumeAgentResult.title,
-        article: resumeAgentResult.article,
-        titleImagePath: resumeAgentResult.titleImagePath,
-        titleIsReferenceOriginal: resumeAgentResult.titleIsReferenceOriginal === true,
-        bodyImages: resumeAgentResult.bodyImages,
-        breakSentencesInBody: pendingDraft.breakSentencesInBody !== false,
-        tags: resumeTags,
-        domNotes: form.naverEditorDomNotes || "",
-        browserProfileDir,
-        preparedContext: preparedNaverSession?.context,
-        preparedPage: preparedNaverSession?.page,
-        resumeExistingDraft: true,
-        log: (message, level) => safeLog(jobId, message, level)
-      });
-      if (account.id) {
-        updateAccountSession(runtimeRoot, account.id, "valid", settings);
-        emitAccountStore(runtimeRoot);
-      }
-      let publishReason = "네이버 보류 발행 초안 발행 완료.";
-      if (pendingDraft.publishToTistoryAfterNaver && tistoryPublishReady) {
-        try {
-          updateStatus(jobId, "publishing", "네이버 이어하기 발행 후 티스토리 발행");
-          const tistoryProfileDir = getTistoryProfileDir(runtimeRoot, tistoryBlogId);
-          const tistoryKey = tistorySessionKey(tistoryBlogId, tistoryProfileDir);
-          preparedTistorySession = reusableTistorySession(tistoryKey);
-          await publishToTistory({
-            tistoryBlogId,
-            category,
-            publishPrivate: pendingDraft.publishPrivate ?? publishPrivate,
-            publishVisibility: pendingDraft.publishVisibility || publishVisibility,
-            publishScheduleMode: pendingDraft.publishScheduleMode || publishScheduleMode,
-            reserveAfterHours: Number(pendingDraft.reserveAfterHours ?? reserveAfterHours),
-            failOnLoginRequired: form.failOnLoginRequired === true,
-            title: resumeAgentResult.title,
-            article: resumeAgentResult.article,
-            titleImagePath: resumeAgentResult.titleImagePath,
-            titleIsReferenceOriginal: resumeAgentResult.titleIsReferenceOriginal === true,
-            bodyImages: resumeAgentResult.bodyImages,
-            breakSentencesInBody: pendingDraft.breakSentencesInBody !== false,
-            tags: resumeTags,
-            browserProfileDir: tistoryProfileDir,
-            preparedContext: preparedTistorySession?.context,
-            preparedPage: preparedTistorySession?.page,
-            runtimeRoot,
-            log: (message, level) => safeLog(jobId, message, level)
-          });
-          writeSettings(runtimeRoot, {
-            tistorySessionStatus: "valid",
-            tistorySessionCheckedAt: new Date().toISOString()
-          });
-          publishReason = "네이버 보류 발행 초안과 티스토리 발행 완료.";
-        } catch (error) {
-          publishReason = `네이버 보류 발행 초안은 완료됐지만 티스토리 발행에 실패했습니다: ${error.message}`;
-          writeSettings(runtimeRoot, {
-            tistorySessionStatus: error.code === "TISTORY_SESSION_EXPIRED" ? "expired" : "unknown",
-            tistorySessionCheckedAt: new Date().toISOString()
-          });
-          safeLog(jobId, publishReason, "warn");
-        }
-      }
+      await publishStoredDraft(pendingDraft,{runtimeRoot,jobId});
+      if(account.id){updateAccountSession(runtimeRoot,account.id,'valid',settings);emitAccountStore(runtimeRoot);}
+      const publishReason=pendingDraft.publishVisibility==='draft'?'네이버 임시저장 완료.':pendingDraft.publishToTistoryAfterNaver?'네이버·티스토리 발행 완료.':'네이버 발행 완료.';
       clearPendingNaverPublishDraft(runtimeRoot);
       const embedding = createEmbedding(resumeAgentResult.title);
       appendHistory(runtimeRoot, {
@@ -1696,80 +1655,12 @@ async function startJob(form) {
     let publishReason = "";
 
     if (shouldPublish) {
-      updateStatus(jobId, "publishing", `Naver 블로그 ${publishVisibility === "public" ? "전체공개" : "비공개"} 발행 자동화`);
-      await publishToNaver({
-        accountId:account.id,
-        accountId: account.id || "",
-        blogId,
-        category,
-        publishPrivate,
-        publishVisibility,
-        publishScheduleMode,
-        reserveAfterHours,
-        failOnLoginRequired: form.failOnLoginRequired === true,
-        title: agentResult.title,
-        article: agentResult.article,
-        titleImagePath: agentResult.titleImagePath,
-        titleIsReferenceOriginal: agentResult.titleIsReferenceOriginal === true,
-        bodyImages: agentResult.bodyImages,
-        breakSentencesInBody,
-        tags,
-        domNotes: form.naverEditorDomNotes || "",
-        browserProfileDir,
-        preparedContext: preparedNaverSession?.context,
-        preparedPage: preparedNaverSession?.page,
-        log: (message, level) => safeLog(jobId, message, level)
-      });
-      if (account.id) {
-        updateAccountSession(runtimeRoot, account.id, "valid", settings);
-        emitAccountStore(runtimeRoot);
-      }
-      if (tistoryPublishReady) {
-        try {
-          updateStatus(jobId, "publishing", "네이버 발행 후 티스토리 발행");
-          const tistoryProfileDir = getTistoryProfileDir(runtimeRoot, tistoryBlogId);
-          const tistoryKey = tistorySessionKey(tistoryBlogId, tistoryProfileDir);
-          preparedTistorySession = reusableTistorySession(tistoryKey);
-          await publishToTistory({
-            tistoryBlogId,
-            category,
-            publishPrivate,
-            publishVisibility,
-            publishScheduleMode,
-            reserveAfterHours,
-            failOnLoginRequired: form.failOnLoginRequired === true,
-            title: agentResult.title,
-            article: agentResult.article,
-            titleImagePath: agentResult.titleImagePath,
-            titleIsReferenceOriginal: agentResult.titleIsReferenceOriginal === true,
-            bodyImages: agentResult.bodyImages,
-            breakSentencesInBody,
-            tags,
-            browserProfileDir: tistoryProfileDir,
-            preparedContext: preparedTistorySession?.context,
-            preparedPage: preparedTistorySession?.page,
-            runtimeRoot,
-            log: (message, level) => safeLog(jobId, message, level)
-          });
-          writeSettings(runtimeRoot, {
-            tistorySessionStatus: "valid",
-            tistorySessionCheckedAt: new Date().toISOString()
-          });
-          publishReason = "네이버와 티스토리 발행 완료.";
-        } catch (error) {
-          publishReason = `네이버 발행은 완료됐지만 티스토리 발행에 실패했습니다: ${error.message}`;
-          writeSettings(runtimeRoot, {
-            tistorySessionStatus: error.code === "TISTORY_SESSION_EXPIRED" ? "expired" : "unknown",
-            tistorySessionCheckedAt: new Date().toISOString()
-          });
-          safeLog(jobId, publishReason, "warn");
-        }
-      } else if (publishToTistoryAfterNaver) {
-        publishReason = "네이버 발행 완료. 티스토리 세션이 유효하지 않아 티스토리 발행은 건너뜁니다.";
-        safeLog(jobId, publishReason, "warn");
-      }
-      publishStatus = "success";
-      updateStatus(jobId, "success", "발행 완료");
+      const pending=buildPendingNaverPublishDraft({jobId,account,blogId,category,topic,productModel,productSiteUrl,productDetailUrl,keyword,agentResult,tags,publishPrivate,publishVisibility,publishScheduleMode,reserveAfterHours,breakSentencesInBody,publishToTistoryAfterNaver,tistoryBlogId,latestLaneResult,researchTitleResult,tokenUsage:jobTokenUsage});
+      updateStatus(jobId,'publishing',publishVisibility==='draft'?'네이버 임시저장':'Chrome 확장 발행');
+      await publishStoredDraft(pending,{runtimeRoot,jobId});
+      if(account.id){updateAccountSession(runtimeRoot,account.id,'valid',settings);emitAccountStore(runtimeRoot);}
+      publishReason=publishVisibility==='draft'?'네이버 임시저장 완료 · 빈 편집기 복귀 확인':publishToTistoryAfterNaver?'네이버·티스토리 발행 완료.':'네이버 발행 완료.';
+      publishStatus='success';updateStatus(jobId,'success',publishReason);
     } else {
       publishReason = "사용자가 발행 실행을 끄고 생성만 실행했습니다.";
       updateStatus(jobId, "generated", "본문 생성 완료, 발행 대기");
@@ -1852,7 +1743,7 @@ async function startJob(form) {
         researchTitleResult: latestResearchTitleResult,
         tokenUsage: jobTokenUsage
       });
-      if (pendingDraft) {
+      if (pendingDraft && !readSettings(runtimeRoot).pendingNaverPublishDraft) {
         writeSettings(runtimeRoot, { pendingNaverPublishDraft: pendingDraft });
         safeLog(jobId, "Naver 작성 완료 draft를 보존했습니다. 세션확인 후 재생성 없이 발행을 이어갑니다.", "warn");
       }
@@ -1937,6 +1828,19 @@ app.whenReady().then(async () => {
     return true;
   });
 
+  ipcMain.handle('pending:get',()=>{
+    const draft=readSettings(getRuntimeRoot()).pendingNaverPublishDraft;
+    return draft?{...draft,images:getPreviewImages({...draft,bodyImages:draft.bodyImages || []})}:null;
+  });
+  ipcMain.handle('pending:archive',()=>{
+    if(activeJob)throw new Error('작업 중에는 보류 원고를 해제할 수 없습니다.');
+    const root=getRuntimeRoot(),draft=readSettings(root).pendingNaverPublishDraft;if(!draft)return null;
+    const folder=path.join(root,'jobs','publication-recovery');fs.mkdirSync(folder,{recursive:true});
+    const file=path.join(folder,'checked-draft-'+Date.now()+'-'+crypto.randomUUID()+'.json');
+    fs.writeFileSync(file,JSON.stringify({...draft,manuallyCheckedAt:new Date().toISOString()},null,2),{flag:'wx'});
+    appendHistory(root,{id:'manual-check-'+Date.now(),create_at:new Date().toISOString(),account_id:draft.accountId,blog_id:draft.blogId,title:draft.title,status:'checked_archived',embedding:createEmbedding(draft.title),reason:'사용자가 Chrome의 게시 상태를 확인하고 보류 원고를 보관함'});
+    clearPendingNaverPublishDraft(root);return {file};
+  });
   ipcMain.handle("settings:save", (_event, settings) => {
     const runtimeRoot = getRuntimeRoot();
     return writeSettings(runtimeRoot, settings);
