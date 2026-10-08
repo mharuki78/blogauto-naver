@@ -23,6 +23,27 @@ test('Write matcher accepts same-blog authoring variants and rejects conflicts o
  for(const [url,want] of cases)assert.equal(matchesNaverWriteUrl(base+url,'foo'),want,url);
  assert.equal(matchesNaverWriteUrl('https://blog.naver.com.evil/foo/postwrite','foo'),false);
 });
+test('revoked connection preserves its unfinished task but permits a fresh code and never resumes the old task',async()=>{
+ const active={id:'old-task',stage:'final_publish',payload:{title:'보존할 원고'}};
+ const state={deviceId:'device-01234567890123456789',connection:{token:'revoked',blogId:'foo',platform:'naver'},activeTask:active,pendingResult:{id:'old-task',result:{published:true,url:'https://blog.naver.com/foo/123'}}};
+ let listener;let pairs=0,resumed=0;
+ const chrome={storage:{local:{get:async()=>({...state}),set:async value=>Object.assign(state,value),remove:async keys=>{for(const key of Array.isArray(keys)?keys:[keys])delete state[key];}}},
+ alarms:{create(){},onAlarm:{addListener(){}}},action:{onClicked:{addListener(){}}},tabs:{onUpdated:{addListener(){}}},runtime:{onStartup:{addListener(){}},onInstalled:{addListener(){}},onMessage:{addListener:fn=>listener=fn}}};
+ const context=vm.createContext({chrome,URL,AbortSignal,crypto:require('node:crypto').webcrypto,importScripts(){},setInterval(){},clearInterval(){},console,fetch:async url=>{
+  if(url.endsWith('/pair')){pairs++;return {ok:true,status:200,json:async()=>({token:'fresh',blogId:'foo',platform:'naver'})};}
+  return {ok:false,status:401,json:async()=>({error:'연결 코드를 새로 발급받아 주세요.'})};
+ }});
+ vm.runInContext(fs.readFileSync(require.resolve('../extension/background.js'),'utf8').replace(/\r?\npump\(\);\r?\n/,'\n'),context);
+ context.resume=async()=>{resumed++;};
+ await context.pump();
+ const reply=await new Promise(resolve=>listener({type:'pair',code:'FRESH-CODE'},null,resolve));
+ assert.equal(reply.ok,true,JSON.stringify(reply));assert.equal(pairs,1);assert.equal(resumed,0);assert.equal(state.connection.token,'fresh');
+ assert.equal(state.activeTask,undefined);assert.equal(state.pendingResult,undefined);
+ assert.equal(state.revokedWork.activeTask.id,'old-task');assert.equal(state.revokedWork.pendingResult.result.published,true);
+ state.connection={token:'revoked-again'};state.activeTask={...active,stage:'waiting_login'};
+ const direct=await new Promise(resolve=>listener({type:'pair',code:'NEXT-CODE'},null,resolve));
+ assert.equal(direct.ok,true,JSON.stringify(direct));assert.equal(pairs,2);assert.equal(resumed,0);assert.equal(state.revokedWork.activeTask.stage,'waiting_login');
+});
 function backgroundFixture(tabUrl) {
  const state={connection:{blogId:'foo',platform:'naver'},editorTab:7};const updates=[];
  const chrome={storage:{local:{get:async()=>state,set:async x=>Object.assign(state,x),remove:async()=>{}}},

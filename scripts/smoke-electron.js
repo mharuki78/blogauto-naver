@@ -306,6 +306,27 @@ const path = require("node:path");
     await window.waitForFunction(() => document.querySelectorAll("#referenceImagePreview .reference-image-card").length === 0);
     console.log("Multi-reference upload and deletion passed.");
     await window.locator(".category-row").filter({ hasText: "Smoke Category" }).locator("[data-action='edit']").click();
+    await window.evaluate(async()=>{
+      window.__originalConnectionApi=window.blogAuto;
+      const account=state.accountStore.accounts[0];
+      account.connection={connected:true,status:'valid',loginStatus:'valid'};renderAccounts();
+      connectionMessages.set('tistory','이전에 발급한 연결 코드');
+      window.blogAuto={...window.blogAuto,extensionConnections:async()=>({accounts:[{accountId:account.id,connected:false,status:'disconnected',loginStatus:'disconnected'}],tistory:{connected:false,status:'disconnected'}})};
+      await refreshExtensionConnections();
+    });
+    if(!/확장 미연결/.test(await window.locator('.account-row .badge').textContent()))throw new Error('Idle Naver connection badge stays connected after Chrome closes');
+    if(!/미연결/.test(await window.locator('#tistoryExtensionStatus').textContent()))throw new Error('Tistory action message hides current disconnected status');
+    await window.evaluate(()=>{window.blogAuto=window.__originalConnectionApi;delete window.__originalConnectionApi;connectionMessages.delete('tistory');});
+    const beforeEdits=await window.evaluate(()=>Object.fromEntries(['accountLabel','blogId','categoryName','categoryKeyword'].map(id=>[id,document.getElementById(id).value])));
+    await window.locator('#accountLabel').fill('수정 중 표시명');await window.locator('#blogId').fill('edited-blog');
+    await window.locator('#categoryName').fill('수정 중 카테고리');await window.locator('#categoryKeyword').fill('수정 중 키워드');
+    const pairingCode=await window.locator('.connection-message').evaluate(e=>e.textContent.match(/연결 코드: ([A-F0-9]{10})/)[1]);
+    const paired=await fetch('http://127.0.0.1:46321/pair',{method:'POST',headers:{'Content-Type':'application/json',Origin:'chrome-extension://'+'a'.repeat(32)},body:JSON.stringify({code:pairingCode,deviceId:'smoke-device-01234567890123456789'})});
+    if(!paired.ok)throw new Error('Cannot simulate extension connection for edited-form regression');
+    await window.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    if(await window.locator('#accountLabel').inputValue()!=='수정 중 표시명' || await window.locator('#blogId').inputValue()!=='edited-blog' || await window.locator('#categoryKeyword').inputValue()!=='수정 중 키워드')throw new Error('Connection event overwrites edited account/category forms');
+    await window.evaluate(values=>{for(const [id,value] of Object.entries(values))document.getElementById(id).value=value;},beforeEdits);
+    console.log('Idle Naver/Tistory connection status and in-progress form edits verified.');
     const categoryEditSnapshot = await window.evaluate(() => ({
       name: document.querySelector("#categoryName")?.value || "",
       keyword: document.querySelector("#categoryKeyword")?.value || "",

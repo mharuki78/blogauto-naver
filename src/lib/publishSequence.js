@@ -1,7 +1,8 @@
 const {confirmedPublication,publicationContext}=require('./publishRecovery');
+const {normalizeTistoryBlogId}=require('./tistoryTarget');
 const uncertain=message=>Object.assign(new Error(message),{code:'PUBLISH_UNCERTAIN'});
 async function publishSequence(draft,{save,naver,tistory,log=()=>{}}) {
-  const state={...draft,publications:{...draft.publications}};
+  const state={...draft,tistoryBlogId:normalizeTistoryBlogId(draft.tistoryBlogId),publications:{...draft.publications}};
   for(const platform of ['naver',...(draft.publishToTistoryAfterNaver===true && draft.tistoryBlogId?['tistory']:[])]) {
     const context=publicationContext(state,platform),prior=state.publications[platform];
     if(prior?.status==='done') {

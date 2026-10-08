@@ -16,7 +16,7 @@ const {publishSequence}=require('./lib/publishSequence');
 const {recoverPendingPublication,confirmedPublication,publicationContext}=require('./lib/publishRecovery');
 const {openAccountChrome}=require('./lib/chromeLauncher');
 const {prepareExtension}=require('./lib/extensionSetup');
-const {TISTORY_ACCOUNT_ID,tistoryAccount}=require('./lib/tistoryTarget');
+const {TISTORY_ACCOUNT_ID,tistoryAccount,normalizeTistoryBlogId}=require('./lib/tistoryTarget');
 const { ensureSettingsFile, normalizeCodexModel, normalizeImageAspectRatio, normalizeMaxBodyImages, resolveCodexCmdPath, readSettings, writeSettings } = require("./lib/settings");
 const { getAvailableCodexModels } = require("./lib/codexModels");
 const { checkCodexLogin, startCodexLogin } = require("./lib/codexAuth");
@@ -152,7 +152,7 @@ function withAccountImageUrls(runtimeRoot, store) {
 }
 
 function emitAccountStore(runtimeRoot) {
-  emit("accounts:update", withAccountImageUrls(runtimeRoot, readAccountStore(runtimeRoot, readSettings(runtimeRoot))));
+  emit("accounts:update", {...withAccountImageUrls(runtimeRoot, readAccountStore(runtimeRoot, readSettings(runtimeRoot))),connectionOnly:true});
 }
 
 function sessionKeyFor(account, browserProfileDir) {
@@ -862,7 +862,8 @@ async function startTistoryTestPublish(form = {}) {
   const jobId = `tistory_test_${Date.now()}`;
   activeJob = { id: jobId, cancelled: false };
 
-  const tistoryBlogId = String(form.tistoryBlogId || settings.tistoryBlogId || "").trim();
+  let tistoryBlogId;
+  try {tistoryBlogId=normalizeTistoryBlogId(form.tistoryBlogId || settings.tistoryBlogId);}catch(error){activeJob=null;throw error;}
   if (!tistoryBlogId) {
     activeJob = null;
     throw new Error("티스토리 블로그 ID가 필요합니다.");
@@ -984,12 +985,13 @@ async function startJob(form) {
   const shouldPublish = form.publishAfterGenerate === true || form.topicMode === "auto";
   const publishToTistoryAfterNaver = shouldPublish && form.publishToTistoryAfterNaver === true;
   let tistoryPublishReady = publishToTistoryAfterNaver;
-  const tistoryBlogId = String(form.tistoryBlogId || settings.tistoryBlogId || "").trim();
+  let tistoryBlogId;
   let referenceUrls;
   let productModel;
   let productSiteUrl;
   let productDetailUrl;
   try {
+    tistoryBlogId=normalizeTistoryBlogId(form.tistoryBlogId || settings.tistoryBlogId);
     referenceUrls = normalizeReferenceUrls(form.referenceUrls ?? settings.referenceUrls ?? "");
     productModel = normalizeProductModel(form.productModel ?? settings.productModel ?? "");
     productSiteUrl = normalizeProductUrl(form.productSiteUrl ?? settings.productSiteUrl ?? "https://himawari.co.kr/") || "https://himawari.co.kr/";
@@ -1194,7 +1196,6 @@ async function startJob(form) {
       await publishStoredDraft(pendingDraft,{runtimeRoot,jobId});
       if(account.id){updateAccountSession(runtimeRoot,account.id,'valid',settings);emitAccountStore(runtimeRoot);}
       const publishReason=pendingDraft.publishVisibility==='draft'?'네이버 임시저장 완료.':pendingDraft.publishToTistoryAfterNaver?'네이버·티스토리 발행 완료.':'네이버 발행 완료.';
-      clearPendingNaverPublishDraft(runtimeRoot);
       const embedding = createEmbedding(resumeAgentResult.title);
       appendHistory(runtimeRoot, {
         id: jobId,
@@ -1218,6 +1219,7 @@ async function startJob(form) {
         token_total: Number(pendingDraft.tokenTotal || 0),
         reason: publishReason
       });
+      clearPendingNaverPublishDraft(runtimeRoot);
       updateStatus(jobId, "success", "발행 완료");
       emit("job:complete", {
         ...nonSensitiveJob,
@@ -1697,6 +1699,7 @@ async function startJob(form) {
     };
     appendHistory(runtimeRoot, entry);
     if (publishStatus === "success") {
+      clearPendingNaverPublishDraft(runtimeRoot);
       safeLog(jobId, "Naver 발행 완료");
     }
 

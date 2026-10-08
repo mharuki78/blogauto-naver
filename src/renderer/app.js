@@ -42,8 +42,14 @@ async function runConnectionAction(key,button,status,action) {
 }
 async function refreshExtensionConnections() {
   const snapshot=await window.blogAuto.extensionConnections();
+  const connections=new Map((snapshot.accounts || []).map(connection=>[connection.accountId,connection]));
+  state.accountStore={...state.accountStore,accounts:state.accountStore.accounts.map(account=>connections.has(account.id)?{...account,connection:connections.get(account.id)}:account)};
+  renderAccounts();
   const status=$('#tistoryExtensionStatus');
-  if(status && ![...connectionBusy].some(k=>k.startsWith('tistory')) && !connectionMessages.has('tistory'))status.textContent=snapshot.tistory.connected?'티스토리 공용 Chrome 연결됨 · '+(snapshot.tistory.reason || snapshot.tistory.status):'티스토리 공용 Chrome 미연결';
+  if(status && ![...connectionBusy].some(k=>k.startsWith('tistory'))) {
+    const current=snapshot.tistory.connected?'티스토리 공용 Chrome 연결됨 · '+(snapshot.tistory.reason || snapshot.tistory.status):'티스토리 공용 Chrome 미연결';
+    status.textContent=current+(connectionMessages.has('tistory')?'\n'+connectionMessages.get('tistory'):'');
+  }
 }
 const $ = (selector) => document.querySelector(selector);
 const DEFAULT_NAVER_SEARCH_URL = "https://search.naver.com/search.naver?ssc=tab.blog.all&sm=tab_jum&query={query}";
@@ -1910,6 +1916,13 @@ async function boot() {
   renderHistory(initial.history || []);
 
   window.blogAuto.onAccountsUpdate((store) => {
+    if(store.connectionOnly) {
+      const accounts=new Map(store.accounts.map(account=>[account.id,account]));
+      state.accountStore={...state.accountStore,accounts:state.accountStore.accounts.map(account=>{
+        const update=accounts.get(account.id);return update?{...account,connection:update.connection,sessionStatus:update.sessionStatus}:account;
+      })};
+      renderAccounts();return;
+    }
     state.accountStore = store;
     renderAccounts();
     fillAccountForm(selectedAccount());

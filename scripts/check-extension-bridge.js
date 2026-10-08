@@ -39,6 +39,35 @@ test('disconnected account cannot enqueue work',async t=>{
  await assert.rejects(bridge.request('a','publish',{}),{code:'EXTENSION_DISCONNECTED'});
  assert.equal(bridge.tasks.size,0);
 });
+test('failed result journal replacement can be retransmitted and settles the app exactly once',async t=>{
+ const {bridge,pair}=await fixture(t);const token=await pair('a');
+ let settled=0;
+ const pending=bridge.request('a','publish',{title:'title',article:'body'}).then(result=>{settled++;return result;});pending.catch(()=>{});
+ const task=(await call(bridge,'/poll',{},token)).body.task;
+ await call(bridge,'/stage',{id:task.id,stage:'final_publish'},token);
+ const save=bridge.saveTasks.bind(bridge);let saves=0;
+ bridge.saveTasks=()=>{if(++saves===1)throw Object.assign(new Error('EPERM fixture'),{code:'EPERM'});return save();};
+ const body={id:task.id,result:{published:true,url:'https://blog.naver.com/a/123'}};
+ assert.equal((await call(bridge,'/result',body,token)).status,400);
+ assert.equal(bridge.tasks.get(task.id).state,'running');assert.equal(settled,0);
+ assert.equal((await call(bridge,'/result',body,token)).status,200);
+ assert.equal((await Promise.race([pending,new Promise((_,reject)=>setTimeout(()=>reject(Error('waiter never settled')),500))])).published,true);
+ assert.equal(saves,2);assert.equal(settled,1);
+ assert.equal(JSON.parse(fs.readFileSync(bridge.journal))[0].state,'done');
+ assert.equal((await call(bridge,'/result',body,token)).status,200);assert.equal(settled,1);
+});
+test('durable session result retry settles the waiter even after connection metadata save fails',async t=>{
+ const {bridge,pair}=await fixture(t);const token=await pair('a');
+ const pending=bridge.request('a','session',{});pending.catch(()=>{});
+ const task=(await call(bridge,'/poll',{},token)).body.task;
+ const save=bridge.save.bind(bridge);let saves=0;
+ bridge.save=()=>{if(++saves===1)throw Error('metadata EPERM fixture');return save();};
+ const body={id:task.id,result:{status:'valid',blogId:'a',editorBuild:'20261008.1'}};
+ assert.equal((await call(bridge,'/result',body,token)).status,400);
+ assert.equal((await call(bridge,'/result',body,token)).status,200);
+ const result=await Promise.race([pending,new Promise((_,reject)=>setTimeout(()=>reject(Error('metadata failure strands waiter')),500))]);
+ assert.equal(result.status,'valid');
+});
 test('account tokens cannot finish another task or read its image; runtime secrets cannot be assets',async t=>{
  const {root,bridge,pair}=await fixture(t);const a=await pair('a'),b=await pair('b');
  const dir=path.join(root,'jobs','one');fs.mkdirSync(dir,{recursive:true});

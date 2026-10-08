@@ -41,23 +41,39 @@ test('extension update uses stable folder and copies only extension resources',t
  assert.ok(fs.existsSync(path.join(target,'icons','icon-128.png')));
  assert.equal(fs.existsSync(path.join(target,'extension-connections.json')),false);
 });
-async function mainFixture(t) {
+async function mainFixture(t, options={}) {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'himawari-main-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
- const source=path.resolve('src/main.js'), realRequire=createRequire(source), handlers=new Map(),events=new Map();
+ const source=path.resolve('src/main.js'), realRequire=createRequire(source), handlers=new Map(),events=new Map(),emitted=[];
  let generated=0,ready;
- const bridge=new EventEmitter();Object.assign(bridge,disconnected,{start:async()=>{},stop(){},revoke(){},cancelAccount(){}});
+ const bridge=new EventEmitter();Object.assign(bridge,disconnected,{start:async()=>{},stop(){},revoke(){},cancelAccount(){},tasks:new Map()},options.bridge || {});
  const app={isPackaged:false,setPath(){},getPath:()=>root,getAppPath:()=>path.resolve('.'),requestSingleInstanceLock:()=>true,disableHardwareAcceleration(){},commandLine:{appendSwitch(){}},whenReady:()=>({then:fn=>{ready=fn;}}),on:(name,fn)=>events.set(name,fn),quit(){}};
- class Window {constructor(){this.webContents={send(){},on(){}};}loadFile(){}isDestroyed(){return false;}static getAllWindows(){return [];}}
- const context=vm.createContext({__dirname:path.dirname(source),Buffer,console,URL,setTimeout,clearTimeout,process:{...process,env:{...process.env,BLOGAUTO_RUNTIME_ROOT:root,BLOGAUTO_USER_DATA:root,BLOGAUTO_AUTOSTART:'0',BLOGAUTO_SKIP_CODEX_USAGE_REFRESH:'1'}},require:name=>{
+ class Window {constructor(){this.webContents={send:(channel,payload)=>emitted.push({channel,payload}),on(){}};}loadFile(){}isDestroyed(){return false;}static getAllWindows(){return [];}}
+ const context=vm.createContext({__dirname:path.dirname(source),Buffer,console,URL,setTimeout,clearTimeout,setInterval,clearInterval,process:{...process,env:{...process.env,BLOGAUTO_RUNTIME_ROOT:root,BLOGAUTO_USER_DATA:root,BLOGAUTO_AUTOSTART:'0',BLOGAUTO_SKIP_CODEX_USAGE_REFRESH:'1'}},require:name=>{
   if(name==='electron')return {app,BrowserWindow:Window,ipcMain:{handle:(name,fn)=>handlers.set(name,fn)},shell:{},dialog:{}};
   if(name==='./lib/extensionBridge')return {configureBridge:()=>bridge,getBridge:()=>bridge};
   if(name==='./lib/desktopPublisher')return Object.fromEntries(Object.entries(desktop).map(([name,fn])=>[name,typeof fn==='function'?options=>fn({...options,bridge}):fn]));
-  if(name==='./lib/codexRunner')return {runCodexGeneration:async()=>{generated++;throw new Error('unexpected generation');},fetchCodexUsageSnapshot:async()=>({})};
+  if(name==='./lib/codexRunner')return {runCodexGeneration:async args=>{generated++;if(options.generation)return options.generation(args,generated);throw new Error('unexpected generation');},fetchCodexUsageSnapshot:async()=>({})};
+  if(name==='./lib/productReference' && options.generation)return {...realRequire(name),resolveProductReference:async()=>null};
   return realRequire(name);
  }});
  vm.runInContext(fs.readFileSync(source,'utf8'),context);await ready();
- return {root,handlers,context,generated:()=>generated};
+ return {root,handlers,context,emitted,generated:()=>generated};
 }
+test('fresh publication records success and clears pending state before the next automatic account',async t=>{
+ const published=[];
+ const {root,handlers,emitted,generated}=await mainFixture(t,{generation:async(_args,n)=>({status:'success',title:n===1?'배드민턴 셔틀콕':'은하 우주 망원경',article:'실제 생성 경계를 대신하는 검증용 원고 본문입니다.',bodyImages:[]}),bridge:{snapshot:()=>({connected:true}),clientFor:id=>({platform:'naver',blogId:id==='a'?'foo':'bar'}),request:async(id,type,payload)=>{
+  if(type==='session')return {status:'valid',blogId:id==='a'?'foo':'bar',editorBuild:'20261008.1'};
+  published.push(payload.title);return {published:true,url:`https://blog.naver.com/${id==='a'?'foo':'bar'}/123`};
+ }}});
+ writeAccountStore(root,{selectedAccountId:'a',accounts:[{id:'a',blogId:'foo',categories:[]},{id:'b',blogId:'bar',categories:[]}]});
+ const {readSettings}=require('../src/lib/settings');
+ const form={accountId:'a',blogId:'foo',category:'정보',keyword:'배드민턴',productModel:'V3',topic:'배드민턴',topicMode:'manual',publishAfterGenerate:true,includeTitleImage:false,maxBodyImages:1,referenceUrls:''};
+ assert.equal((await handlers.get('job:start')(null,form)).status,'success',JSON.stringify(emitted.filter(e=>e.channel==='job:log').slice(-4)));
+ assert.equal(readSettings(root).pendingNaverPublishDraft,null);
+ assert.equal(require('../src/lib/history').readHistory(root).filter(row=>row.status==='success').length,1);
+ assert.equal((await handlers.get('job:start')(null,{...form,accountId:'b',blogId:'bar',topicMode:'auto',topic:'',keyword:'우주'})).status,'success');
+ assert.equal(generated(),2);assert.equal(published.length,2);assert.equal(readSettings(root).pendingNaverPublishDraft,null);
+});
 test('actual desktop IPC reports old valid account disconnected and blocks model calls before generation',async t=>{
  const {root,handlers,generated}=await mainFixture(t);
  writeAccountStore(root,{selectedAccountId:'a',accounts:[{id:'a',blogId:'foo',sessionStatus:'valid',categories:[{id:'c',name:'정보',keyword:'배드민턴'}]}]});

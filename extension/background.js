@@ -7,7 +7,12 @@ const stored = () => chrome.storage.local.get(['connection','deviceId','session'
 async function api(route, body = {}, override) {
   const c = override || (await stored()).connection;
   const response = await fetch(API + route, { method: 'POST', headers: { 'Content-Type':'application/json', ...(c ? {Authorization:`Bearer ${c.token}`} : {}) }, body:JSON.stringify(body), signal:AbortSignal.timeout(10000) });
-  const data = await response.json(); if (!response.ok) throw new Error(data.error || '앱 연결 오류'); return data;
+  const data = await response.json(); if (!response.ok) throw Object.assign(new Error(data.error || '앱 연결 오류'),{httpStatus:response.status}); return data;
+}
+async function preserveRevokedWork() {
+  const state=await stored();
+  if(state.activeTask || state.pendingResult)await chrome.storage.local.set({revokedWork:{activeTask:state.activeTask,pendingResult:state.pendingResult,revokedAt:new Date().toISOString()}});
+  await chrome.storage.local.remove(['connection','session','editorTab','activeTask','pendingResult']);
 }
 async function frameResults(tabId, command, args = {}) {
   const results = await chrome.scripting.executeScript({target:{tabId,allFrames:true},func:editorCommand,args:[command,args]});
@@ -292,7 +297,7 @@ async function pump() {
       const session=await inspectSession(state.editorTab);await api('/status',{session});
     }
     await chrome.storage.local.remove('connectionError');
-  }catch(error){await chrome.storage.local.set({connectionError:error.message});}finally{clearInterval(heartbeat);busy=false;}
+  }catch(error){if(error.httpStatus===401)await preserveRevokedWork();await chrome.storage.local.set({connectionError:error.message});}finally{clearInterval(heartbeat);busy=false;}
 }
 chrome.alarms.create('connection',{periodInMinutes:.5});chrome.alarms.onAlarm.addListener(()=>pump());
 chrome.action.onClicked.addListener(()=>chrome.tabs.create({url:chrome.runtime.getURL('connect.html')}));
@@ -313,7 +318,12 @@ chrome.runtime.onMessage.addListener((message,_sender,reply)=>{
   (async()=>{
     if(message.type==='status'){pump();return stored();}
     if(message.type==='pair'){
-      const state=await stored();if(state.activeTask)throw new Error('진행 중인 작업을 먼저 취소하세요.');
+      let state=await stored();
+      if(state.activeTask) {
+        if(busy)throw new Error('진행 중인 작업을 먼저 취소하고 잠시 후 연결하세요.');
+        try {await api('/heartbeat');}catch(error){if(error.httpStatus!==401)throw error;await preserveRevokedWork();state=await stored();}
+        if(state.activeTask)throw new Error('진행 중인 작업을 먼저 취소하세요.');
+      }
       const deviceId=state.deviceId || crypto.randomUUID();const connection=await api('/pair',{code:message.code,deviceId});
       await chrome.storage.local.set({deviceId,connection});await chrome.storage.local.remove(['session','editorTab']);return {ok:true};
     }

@@ -1,4 +1,4 @@
-const {TISTORY_ACCOUNT_ID}=require('./tistoryTarget');
+const {TISTORY_ACCOUNT_ID,normalizeTistoryBlogId}=require('./tistoryTarget');
 const {matchesNaverWriteUrl}=require('../../extension/naver-route');
 const uncertain=message=>Object.assign(new Error(message),{code:'PUBLISH_UNCERTAIN'});
 function targetUrl(value,platform,blogId,management=false) {
@@ -24,11 +24,11 @@ function confirmedPublication(result,{platform='naver',blogId,title,payload={}}=
   return payload.publishScheduleMode!=='reserve' && targetUrl(result.url,platform,blogId);
 }
 function publicationContext(draft,platform) {
-  return {platform,blogId:platform==='tistory'?draft.tistoryBlogId:draft.blogId,title:draft.title,payload:draft};
+  return {platform,blogId:platform==='tistory'?normalizeTistoryBlogId(draft.tistoryBlogId):draft.blogId,title:draft.title,payload:draft};
 }
 async function recoverPendingPublication(draft,{bridge,save,log=()=>{}}) {
   if(!draft.publications)throw uncertain('이전 버전 원고에는 발행 확인 기록이 없습니다. 원고를 보존했습니다. Chrome에서 이전 게시 여부를 확인한 후 보류 원고 처리에서 확인하세요.');
-  let state={...draft,publications:{...draft.publications}};
+  let state={...draft,tistoryBlogId:normalizeTistoryBlogId(draft.tistoryBlogId),publications:{...draft.publications}};
   for(const platform of ['naver',...(draft.publishToTistoryAfterNaver===true?['tistory']:[])]) {
     const prior=state.publications[platform];if(!prior)continue;
     const context=publicationContext(state,platform);

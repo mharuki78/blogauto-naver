@@ -5,6 +5,15 @@ const {confirmedPublication,recoverPendingPublication}=require('../src/lib/publi
 const draft={accountId:'a',blogId:'foo',tistoryBlogId:'bar',title:'제목',article:'본문',publishVisibility:'public',publishToTistoryAfterNaver:true,publications:{}};
 const naver={published:true,url:'https://blog.naver.com/foo/123'};
 const tistory={published:true,url:'https://bar.tistory.com/456'};
+test('URL-form Tistory ID is normalized for saved state, completion proof and journal recovery',async()=>{
+ const input={...draft,tistoryBlogId:'https://BAR.tistory.com/',publications:{naver:{...naver,status:'done'}}};
+ let saved;
+ const result=await publishSequence(input,{save:async state=>{saved=structuredClone(state);},tistory:async()=>tistory});
+ assert.equal(result.tistoryBlogId,'bar');assert.equal(saved.tistoryBlogId,'bar');
+ const bridge={tasks:new Map([['one',{type:'publish',accountId:'tistory-shared',blogId:'bar',state:'done',payload:{...draft,tistoryBlogId:'bar'},result:tistory}]])};
+ const recovered=await recoverPendingPublication({...input,publications:{naver:{...naver,status:'done'},tistory:{status:'running'}}},{bridge,save:async state=>{saved=structuredClone(state);}});
+ assert.equal(recovered.publications.tistory.status,'done');assert.equal(recovered.tistoryBlogId,'bar');
+});
 test('Naver success followed by Tistory failure retries Tistory only and preserves both proofs',async()=>{
  let saved,n=0,t=0;
  const options={save:async state=>{saved=structuredClone(state);},naver:async()=>{n++;return naver;},tistory:async()=>{t++;if(t===1)throw new Error('upload failed');return tistory;}};

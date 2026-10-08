@@ -20,6 +20,11 @@ class ExtensionBridge extends EventEmitter {
   }
   save() { this.atomic(this.file, { clients: [...this.clients.values()] }); }
   saveTasks() { this.atomic(this.journal, [...this.tasks.values()]); }
+  settleWaiter(task) {
+    const waiter=this.waiters.get(task.id);if(!waiter)return;
+    clearTimeout(waiter.timer);this.waiters.delete(task.id);
+    task.state==='done'?waiter.resolve(task.result):waiter.reject(failure(task.error || '작업이 종료되었습니다.',task.code || 'EXTENSION_ERROR'));
+  }
   atomic(file, value) {
     const temp = file + '.' + crypto.randomUUID() + '.tmp';
     try {
@@ -175,17 +180,19 @@ class ExtensionBridge extends EventEmitter {
     }
     if (url.pathname === '/result' && req.method === 'POST') {
       const t = this.tasks.get(body.id); if (!t || t.clientToken !== token) return this.reply(res,404,{error:'Unknown task'});
-      if (['done','failed','cancelled','expired'].includes(t.state)) return this.reply(res,200,{ok:true});
+      if (['done','failed','cancelled','expired'].includes(t.state)) {this.settleWaiter(t);return this.reply(res,200,{ok:true});}
       if(t.type==='publish' && !body.error){
         const draft=t.platform==='naver' && t.payload.publishVisibility==='draft';
         const valid=require('./publishRecovery').confirmedPublication(body.result,{platform:t.platform,blogId:t.blogId,title:t.payload.title,payload:t.payload});
         if(!valid){body.error='발행 또는 임시저장 완료 증거가 누락되었습니다. Chrome에서 게시 여부를 확인하세요.';body.code='PUBLISH_UNCERTAIN';}
       }
       if(t.type==='publish' && body.error && t.stage==='final_publish')body.code='PUBLISH_UNCERTAIN';
-      t.state = body.error ? 'failed' : 'done'; t.result = body.result || null; t.error = String(body.error || ''); t.code=String(body.code || ''); this.saveTasks();
+      const completed={...t,state:body.error?'failed':'done',result:body.result || null,error:String(body.error || ''),code:String(body.code || '')};
+      this.tasks.set(t.id,completed);
+      try {this.saveTasks();} catch(error) {this.tasks.set(t.id,t);throw error;}
       if(t.type==='session' && STATES.has(body.result?.status))this.updateSession(c,{...body.result,checkedAt:new Date().toISOString()});
       this.emit('status',c.accountId,this.snapshot(c.accountId));
-      const waiter=this.waiters.get(t.id); if (waiter) { clearTimeout(waiter.timer); this.waiters.delete(t.id); body.error ? waiter.reject(failure(body.error,body.code || 'EXTENSION_ERROR')) : waiter.resolve(body.result); }
+      this.settleWaiter(completed);
       return this.reply(res,200,{ok:true});
     }
     if (url.pathname === '/asset' && req.method === 'GET') {
